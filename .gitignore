@@ -5,6 +5,7 @@ gps.db
 .env
 frontend/node_modules/
 frontend/dist/
+frontend/.env.local
 infra/terraform/.terraform/
 infra/terraform/terraform.tfvars
 infra/terraform/*.tfstate
