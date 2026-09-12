@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.py[cod]
+gps.db
+.env
+frontend/node_modules/
+frontend/dist/
+infra/terraform/.terraform/

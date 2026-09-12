@@ -1,0 +1,28 @@
+services:
+  api:
+    build: .
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET}
+    ports:
+      - "8000:8000"
+      - "5001:5001"
+      - "5002:5002"
+    depends_on:
+      db:
+        condition: service_healthy
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: gps
+      POSTGRES_USER: gps
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - gps_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gps -d gps"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+volumes:
+  gps_data:

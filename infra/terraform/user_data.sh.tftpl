@@ -1,0 +1,25 @@
+#!/bin/bash
+set -euxo pipefail
+
+dnf update -y
+dnf install -y docker git
+systemctl enable --now docker
+usermod -aG docker ec2-user
+
+mkdir -p /opt/gps-fleet
+if [ ! -d /opt/gps-fleet/.git ]; then
+  git clone --branch '${repository_ref}' '${repository_url}' /opt/gps-fleet
+else
+  git -C /opt/gps-fleet fetch --all
+  git -C /opt/gps-fleet checkout '${repository_ref}'
+  git -C /opt/gps-fleet pull --ff-only
+fi
+
+cat > /opt/gps-fleet/.env <<'ENV'
+DATABASE_URL=${database_url}
+POSTGRES_PASSWORD=${postgres_pass}
+JWT_SECRET=${jwt_secret}
+ENV
+
+cd /opt/gps-fleet
+docker compose up -d --build
