@@ -6,3 +6,4 @@ gps.db
 frontend/node_modules/
 frontend/dist/
 infra/terraform/.terraform/
+infra/terraform/terraform.tfvars

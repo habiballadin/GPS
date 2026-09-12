@@ -109,30 +109,11 @@ resource "aws_security_group" "app" {
   tags = { Name = "${var.project_name}-sg" }
 }
 
-resource "aws_iam_role" "ec2" {
-  name = "${var.project_name}-ec2-role"
-  assume_role_policy = jsonencode({
-    Version   = "2012-10-17",
-    Statement = [{ Effect = "Allow", Principal = { Service = "ec2.amazonaws.com" }, Action = "sts:AssumeRole" }]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "ssm" {
-  role       = aws_iam_role.ec2.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-}
-
-resource "aws_iam_instance_profile" "ec2" {
-  name = "${var.project_name}-profile"
-  role = aws_iam_role.ec2.name
-}
-
 resource "aws_instance" "app" {
   ami                         = data.aws_ami.amazon_linux.id
   instance_type               = var.instance_type
   subnet_id                   = aws_subnet.public.id
   vpc_security_group_ids      = [aws_security_group.app.id]
-  iam_instance_profile        = aws_iam_instance_profile.ec2.name
   key_name                    = var.ssh_key_name != "" ? var.ssh_key_name : null
   associate_public_ip_address = true
 
