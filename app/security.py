@@ -8,7 +8,9 @@ from .config import settings
 from .db import get_db
 from .models import User
 
-pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# PBKDF2-SHA256 avoids the bcrypt/passlib backend mismatch seen on some
+# minimal Linux images while remaining portable across local and AWS hosts.
+pwd = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 oauth2 = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 
