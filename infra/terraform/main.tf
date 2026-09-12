@@ -79,6 +79,13 @@ resource "aws_security_group" "app" {
     cidr_blocks = ["0.0.0.0/0"]
   }
   ingress {
+    description = "FastAPI"
+    from_port   = 8000
+    to_port     = 8000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  ingress {
     description = "Teltonika"
     from_port   = 5001
     to_port     = 5001

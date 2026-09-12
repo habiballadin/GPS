@@ -12,5 +12,5 @@ output "concox_tcp_endpoint" {
 }
 
 output "api_url" {
-  value = "http://${aws_eip.app.public_ip}"
+  value = "http://${aws_eip.app.public_ip}:8000"
 }
