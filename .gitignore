@@ -11,3 +11,10 @@ infra/terraform/terraform.tfvars
 infra/terraform/*.tfstate
 infra/terraform/*.tfstate.*
 infra/terraform/tfplan
+infra/terraform/platform/.terraform/
+infra/terraform/platform/terraform.tfvars
+infra/terraform/platform/*.tfstate
+infra/terraform/platform/*.tfstate.*
+infra/terraform/platform/tfplan
+gps-ec2-deploy
+gps-ec2-deploy.pub

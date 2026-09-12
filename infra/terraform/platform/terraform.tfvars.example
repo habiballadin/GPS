@@ -1,0 +1,15 @@
+aws_region = "ap-south-1"
+project_name = "gps-fleet"
+environment = "production"
+
+# Push these images to the ECR URLs printed by `terraform output`.
+api_image_tag = "latest"
+telemetry_image_tag = "latest"
+
+# Set true only when you want the associated managed service and cost.
+enable_nat_gateway = true
+enable_timestream = false
+
+# Aurora, Redis, NAT gateways, and Fargate are production-priced resources.
+api_desired_count = 2
+telemetry_desired_count = 2
