@@ -16,7 +16,7 @@ variable "repository_url" {
 
 variable "repository_ref" {
   type    = string
-  default = "main"
+  default = "gps"
 }
 
 variable "instance_type" {
