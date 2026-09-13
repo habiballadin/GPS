@@ -131,6 +131,7 @@ resource "aws_instance" "app" {
     postgres_pass  = random_password.postgres.result
     jwt_secret     = random_password.jwt.result
   })
+  user_data_replace_on_change = true
 
   root_block_device {
     volume_type           = "gp3"
