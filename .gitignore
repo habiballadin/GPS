@@ -23,6 +23,7 @@ infra/terraform/terraform.tfvars
 infra/terraform/*.tfstate
 infra/terraform/*.tfstate.*
 infra/terraform/tfplan
+infra/terraform/lambda/*.zip
 infra/terraform/platform/.terraform/
 infra/terraform/platform/.terraform.lock.hcl
 infra/terraform/platform/terraform.tfvars
