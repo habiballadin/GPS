@@ -1,0 +1,12 @@
+.git
+**/node_modules
+**/.next
+!apps/web-console/.next
+!apps/web-console/.next/**
+**/dist
+**/coverage
+*.tfstate
+*.tfstate.*
+infra/terraform/.terraform
+apps/web-console/playwright-report
+apps/web-console/test-results
