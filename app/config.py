@@ -5,6 +5,14 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./gps.db"
     jwt_secret: str = "change-me"
     jwt_expire_minutes: int = 60 * 24
+    refresh_expire_days: int = 30
+    app_base_url: str = "http://localhost:3000"
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str = "no-reply@gps-fleet.local"
+    smtp_starttls: bool = True
     tcp_teltonika_host: str = "0.0.0.0"
     tcp_teltonika_port: int = 5001
     tcp_gt06_host: str = "0.0.0.0"

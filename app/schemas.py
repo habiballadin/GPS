@@ -17,6 +17,49 @@ class LoginIn(BaseModel):
 class TokenOut(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    refresh_token: str | None = None
+    expires_in: int | None = None
+
+
+class RefreshIn(BaseModel):
+    refresh_token: str
+
+
+class PasswordResetRequest(BaseModel):
+    email: str
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    password: str = Field(min_length=8)
+
+
+class InvitationAccept(BaseModel):
+    token: str
+    password: str = Field(min_length=8)
+
+
+class UserOut(BaseModel):
+    id: int
+    email: str
+    role: str
+    organization_id: int
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserCreate(BaseModel):
+    email: str
+    password: str = Field(min_length=8)
+    role: Literal["admin", "manager", "operator", "viewer"] = "operator"
+
+
+class UserRolePatch(BaseModel):
+    role: Literal["admin", "manager", "operator", "viewer"]
+
+
+class InvitationCreate(BaseModel):
+    email: str
+    role: Literal["admin", "manager", "operator", "viewer"] = "operator"
 
 
 class VehicleIn(BaseModel):
@@ -31,6 +74,32 @@ class VehicleOut(VehicleIn):
     active: bool
     last_seen_at: datetime | None = None
     model_config = ConfigDict(from_attributes=True)
+
+
+class VehiclePatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    license_plate: str | None = None
+    protocol: str | None = None
+    active: bool | None = None
+
+
+class AssignmentIn(BaseModel):
+    driver_id: int
+
+
+class AssignmentOut(AssignmentIn):
+    id: int
+    vehicle_id: int
+    assigned_at: datetime
+    ended_at: datetime | None = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MaintenanceIn(BaseModel):
+    name: str = Field(min_length=1, max_length=180)
+    status: str = "planned"
+    description: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 class PositionOut(BaseModel):

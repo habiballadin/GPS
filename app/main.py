@@ -1,14 +1,16 @@
 from contextlib import asynccontextmanager
 import asyncio
+from datetime import datetime, timedelta, timezone
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from .db import Base, engine, get_db
 from .gateway import start_servers
-from .models import Alert, Driver, Geofence, Organization, Position, ResourceRecord, Trip, User, Vehicle
-from .schemas import DriverIn, DriverOut, GeofenceIn, GeofenceOut, LoginIn, PositionOut, RegisterIn, ResourceIn, ResourceOut, ResourcePatch, RESOURCE_TYPES, TokenOut, TripIn, TripOut, VehicleIn, VehicleOut
-from .security import current_user, hash_password, token_for, verify_password
+from .models import Alert, Driver, Geofence, OneTimeToken, Organization, Position, RefreshSession, ResourceRecord, Trip, User, Vehicle, VehicleAssignment
+from .schemas import AssignmentIn, AssignmentOut, DriverIn, DriverOut, GeofenceIn, GeofenceOut, InvitationAccept, InvitationCreate, LoginIn, MaintenanceIn, PasswordResetConfirm, PasswordResetRequest, PositionOut, RefreshIn, RegisterIn, ResourceIn, ResourceOut, ResourcePatch, RESOURCE_TYPES, TokenOut, TripIn, TripOut, UserCreate, UserOut, UserRolePatch, VehicleIn, VehicleOut, VehiclePatch
+from .security import current_user, hash_password, random_token, require_roles, token_for, token_hash, verify_password
+from .mailer import send_email
 
 
 @asynccontextmanager
@@ -36,20 +38,110 @@ def resource_or_400(resource_type: str) -> str:
 def health(): return {"status": "ok", "gps_gateway": "custom_tcp", "traccar": False}
 
 
+def issue_tokens(user: User, db: Session) -> TokenOut:
+    refresh = random_token()
+    db.add(RefreshSession(user_id=user.id, token_hash=token_hash(refresh), expires_at=datetime.now(timezone.utc) + timedelta(days=30)))
+    db.commit()
+    return TokenOut(access_token=token_for(user, 60), refresh_token=refresh, expires_in=3600)
+
+
 @app.post("/api/v1/auth/register", response_model=TokenOut)
 def register(body: RegisterIn, db: Session = Depends(get_db)):
     if db.query(User).filter(User.email == body.email.lower()).first(): raise HTTPException(409, "Email already registered")
     org = Organization(name=body.organization_name); db.add(org); db.flush()
     user = User(organization_id=org.id, email=body.email.lower(), password_hash=hash_password(body.password), role="admin")
     db.add(user); db.commit(); db.refresh(user)
-    return TokenOut(access_token=token_for(user))
+    return issue_tokens(user, db)
 
 
 @app.post("/api/v1/auth/login", response_model=TokenOut)
 def login(body: LoginIn, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == body.email.lower()).first()
     if not user or not verify_password(body.password, user.password_hash): raise HTTPException(401, "Invalid email or password")
-    return TokenOut(access_token=token_for(user))
+    return issue_tokens(user, db)
+
+
+@app.post("/api/v1/auth/refresh", response_model=TokenOut)
+def refresh_tokens(body: RefreshIn, db: Session = Depends(get_db)):
+    session = db.query(RefreshSession).filter(RefreshSession.token_hash == token_hash(body.refresh_token), RefreshSession.revoked_at.is_(None)).first()
+    if not session or session.expires_at <= datetime.now(timezone.utc): raise HTTPException(401, "Refresh token expired")
+    user = db.get(User, session.user_id)
+    if not user: raise HTTPException(401, "User not found")
+    session.revoked_at = datetime.now(timezone.utc)
+    return issue_tokens(user, db)
+
+
+@app.post("/api/v1/auth/password-reset/request")
+def request_password_reset(body: PasswordResetRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == body.email.lower()).first()
+    if user:
+        raw = random_token()
+        db.add(OneTimeToken(kind="password_reset", user_id=user.id, email=user.email, token_hash=token_hash(raw), expires_at=datetime.now(timezone.utc) + timedelta(minutes=30)))
+        db.commit()
+        from .config import settings
+        send_email(user.email, "Reset your GPS Fleet password", f"Reset your password: {settings.app_base_url}/reset-password?token={raw}")
+    return {"message": "If the account exists, recovery instructions have been sent."}
+
+
+@app.post("/api/v1/auth/password-reset/confirm")
+def confirm_password_reset(body: PasswordResetConfirm, db: Session = Depends(get_db)):
+    item = db.query(OneTimeToken).filter(OneTimeToken.kind == "password_reset", OneTimeToken.token_hash == token_hash(body.token), OneTimeToken.used_at.is_(None)).first()
+    if not item or item.expires_at <= datetime.now(timezone.utc): raise HTTPException(400, "Invalid or expired reset token")
+    user = db.get(User, item.user_id)
+    if not user: raise HTTPException(400, "Invalid reset token")
+    user.password_hash = hash_password(body.password); item.used_at = datetime.now(timezone.utc); db.commit()
+    return {"message": "Password updated"}
+
+
+@app.post("/api/v1/auth/invitations/accept", response_model=TokenOut)
+def accept_invitation(body: InvitationAccept, db: Session = Depends(get_db)):
+    item = db.query(OneTimeToken).filter(OneTimeToken.kind == "invitation", OneTimeToken.token_hash == token_hash(body.token), OneTimeToken.used_at.is_(None)).first()
+    if not item or item.expires_at <= datetime.now(timezone.utc): raise HTTPException(400, "Invalid or expired invitation")
+    if db.query(User).filter(User.email == item.email).first(): raise HTTPException(409, "Email already registered")
+    user = User(organization_id=item.organization_id, email=item.email, password_hash=hash_password(body.password), role=item.role or "operator")
+    db.add(user); item.used_at = datetime.now(timezone.utc); db.commit(); db.refresh(user)
+    return issue_tokens(user, db)
+
+
+@app.get("/api/v1/auth/me", response_model=UserOut)
+def me(user: User = Depends(current_user)):
+    return user
+
+
+@app.get("/api/v1/users", response_model=list[UserOut])
+def list_users(user: User = Depends(require_roles("admin", "manager")), db: Session = Depends(get_db)):
+    return db.query(User).filter(User.organization_id == user.organization_id).order_by(User.id).all()
+
+
+@app.post("/api/v1/users", response_model=UserOut, status_code=201)
+def create_user(body: UserCreate, user: User = Depends(require_roles("admin")), db: Session = Depends(get_db)):
+    email = body.email.lower()
+    if db.query(User).filter(User.email == email).first():
+        raise HTTPException(409, "Email already registered")
+    member = User(organization_id=user.organization_id, email=email, password_hash=hash_password(body.password), role=body.role)
+    db.add(member); db.commit(); db.refresh(member)
+    return member
+
+
+@app.post("/api/v1/users/invite")
+def invite_user(body: InvitationCreate, user: User = Depends(require_roles("admin")), db: Session = Depends(get_db)):
+    email = body.email.lower()
+    if db.query(User).filter(User.email == email).first(): raise HTTPException(409, "Email already registered")
+    raw = random_token()
+    db.add(OneTimeToken(kind="invitation", email=email, organization_id=user.organization_id, role=body.role, token_hash=token_hash(raw), expires_at=datetime.now(timezone.utc) + timedelta(days=7)))
+    db.commit()
+    from .config import settings
+    delivered = send_email(email, "You are invited to GPS Fleet", f"Accept your invitation: {settings.app_base_url}/accept-invitation?token={raw}")
+    return {"message": "Invitation created", "email_delivered": delivered}
+
+
+@app.patch("/api/v1/users/{user_id}/role", response_model=UserOut)
+def update_user_role(user_id: int, body: UserRolePatch, user: User = Depends(require_roles("admin")), db: Session = Depends(get_db)):
+    member = db.query(User).filter(User.id == user_id, User.organization_id == user.organization_id).first()
+    if not member: raise HTTPException(404, "User not found")
+    if member.id == user.id and body.role != "admin": raise HTTPException(400, "You cannot remove your own admin role")
+    member.role = body.role; db.commit(); db.refresh(member)
+    return member
 
 
 @app.post("/api/v1/vehicles", response_model=VehicleOut)
@@ -61,6 +153,65 @@ def create_vehicle(body: VehicleIn, user: User = Depends(current_user), db: Sess
 @app.get("/api/v1/vehicles", response_model=list[VehicleOut])
 def list_vehicles(user: User = Depends(current_user), db: Session = Depends(get_db)):
     return db.query(Vehicle).filter(Vehicle.organization_id == user.organization_id).order_by(Vehicle.id.desc()).all()
+
+
+@app.get("/api/v1/vehicles/{vehicle_id}", response_model=VehicleOut)
+def get_vehicle(vehicle_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id, Vehicle.organization_id == user.organization_id).first()
+    if not vehicle: raise HTTPException(404, "Vehicle not found")
+    return vehicle
+
+
+@app.get("/api/v1/vehicles/{vehicle_id}/history", response_model=list[PositionOut])
+def vehicle_history(vehicle_id: int, since: datetime | None = None, until: datetime | None = None, limit: int = Query(1000, ge=1, le=10000), user: User = Depends(current_user), db: Session = Depends(get_db)):
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id, Vehicle.organization_id == user.organization_id).first()
+    if not vehicle: raise HTTPException(404, "Vehicle not found")
+    query = db.query(Position).filter(Position.vehicle_id == vehicle_id, Position.organization_id == user.organization_id)
+    if since: query = query.filter(Position.recorded_at >= since)
+    if until: query = query.filter(Position.recorded_at <= until)
+    return query.order_by(Position.recorded_at.asc()).limit(limit).all()
+
+
+@app.get("/api/v1/vehicles/{vehicle_id}/assignments", response_model=list[AssignmentOut])
+def vehicle_assignments(vehicle_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    return db.query(VehicleAssignment).filter(VehicleAssignment.vehicle_id == vehicle_id, VehicleAssignment.organization_id == user.organization_id).order_by(VehicleAssignment.assigned_at.desc()).all()
+
+
+@app.post("/api/v1/vehicles/{vehicle_id}/assignments", response_model=AssignmentOut, status_code=201)
+def assign_vehicle(vehicle_id: int, body: AssignmentIn, user: User = Depends(require_roles("admin", "manager", "operator")), db: Session = Depends(get_db)):
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id, Vehicle.organization_id == user.organization_id).first(); driver = db.query(Driver).filter(Driver.id == body.driver_id, Driver.organization_id == user.organization_id, Driver.active.is_(True)).first()
+    if not vehicle or not driver: raise HTTPException(404, "Vehicle or driver not found")
+    active = db.query(VehicleAssignment).filter(VehicleAssignment.vehicle_id == vehicle_id, VehicleAssignment.organization_id == user.organization_id, VehicleAssignment.ended_at.is_(None)).all()
+    for item in active: item.ended_at = datetime.now(timezone.utc)
+    assignment = VehicleAssignment(organization_id=user.organization_id, vehicle_id=vehicle_id, driver_id=body.driver_id); db.add(assignment); db.commit(); db.refresh(assignment); return assignment
+
+
+@app.get("/api/v1/vehicles/{vehicle_id}/maintenance", response_model=list[ResourceOut])
+def vehicle_maintenance(vehicle_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    return db.query(ResourceRecord).filter(ResourceRecord.organization_id == user.organization_id, ResourceRecord.resource_type == "maintenance", ResourceRecord.details["vehicle_id"].as_integer() == vehicle_id).order_by(ResourceRecord.updated_at.desc()).all()
+
+
+@app.post("/api/v1/vehicles/{vehicle_id}/maintenance", response_model=ResourceOut, status_code=201)
+def add_vehicle_maintenance(vehicle_id: int, body: MaintenanceIn, user: User = Depends(require_roles("admin", "manager", "operator")), db: Session = Depends(get_db)):
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id, Vehicle.organization_id == user.organization_id).first()
+    if not vehicle: raise HTTPException(404, "Vehicle not found")
+    details = {**body.details, "vehicle_id": vehicle_id}; record = ResourceRecord(organization_id=user.organization_id, resource_type="maintenance", name=body.name, status=body.status, description=body.description, details=details); db.add(record); db.commit(); db.refresh(record); return record
+
+
+@app.patch("/api/v1/vehicles/{vehicle_id}", response_model=VehicleOut)
+def update_vehicle(vehicle_id: int, body: VehiclePatch, user: User = Depends(require_roles("admin", "manager", "operator")), db: Session = Depends(get_db)):
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id, Vehicle.organization_id == user.organization_id).first()
+    if not vehicle: raise HTTPException(404, "Vehicle not found")
+    for field, value in body.model_dump(exclude_unset=True).items(): setattr(vehicle, field, value)
+    db.commit(); db.refresh(vehicle)
+    return vehicle
+
+
+@app.delete("/api/v1/vehicles/{vehicle_id}", status_code=204)
+def delete_vehicle(vehicle_id: int, user: User = Depends(require_roles("admin", "manager")), db: Session = Depends(get_db)):
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id, Vehicle.organization_id == user.organization_id).first()
+    if not vehicle: raise HTTPException(404, "Vehicle not found")
+    vehicle.active = False; db.commit()
 
 
 @app.get("/api/v1/vehicles/{vehicle_id}/positions", response_model=list[PositionOut])

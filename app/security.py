@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta, timezone
+import hashlib
+import secrets
 import jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
@@ -22,9 +24,17 @@ def verify_password(password: str, hashed: str) -> bool:
     return pwd.verify(password, hashed)
 
 
-def token_for(user: User) -> str:
-    exp = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expire_minutes)
+def token_for(user: User, expires_minutes: int | None = None) -> str:
+    exp = datetime.now(timezone.utc) + timedelta(minutes=expires_minutes or settings.jwt_expire_minutes)
     return jwt.encode({"sub": str(user.id), "org": user.organization_id, "role": user.role, "exp": exp}, settings.jwt_secret, algorithm="HS256")
+
+
+def random_token() -> str:
+    return secrets.token_urlsafe(48)
+
+
+def token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 def current_user(token: str = Depends(oauth2), db: Session = Depends(get_db)) -> User:
@@ -37,3 +47,11 @@ def current_user(token: str = Depends(oauth2), db: Session = Depends(get_db)) ->
     if not user:
         raise error
     return user
+
+
+def require_roles(*roles: str):
+    def dependency(user: User = Depends(current_user)) -> User:
+        if user.role not in roles:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+        return user
+    return dependency
