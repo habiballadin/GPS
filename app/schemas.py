@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -82,4 +83,37 @@ class GeofenceIn(BaseModel):
 class GeofenceOut(GeofenceIn):
     id: int
     active: bool
+    model_config = ConfigDict(from_attributes=True)
+
+
+RESOURCE_TYPES = Literal[
+    "trailers", "equipment", "devices", "orders", "routes", "stops", "teams", "shifts",
+    "certifications", "availability", "work-orders", "service-plans", "inspections", "parts",
+    "vendors", "events", "incidents", "driver-safety", "investigations", "corrective-actions",
+    "fuel", "costs", "reports", "analytics", "exports", "documents", "integrations",
+    "notifications", "organization", "users", "roles", "api-keys", "ai", "geofences",
+    "dispatch", "maintenance", "safety", "finance", "settings", "telematics", "orders", "audit"
+]
+
+
+class ResourceIn(BaseModel):
+    name: str = Field(min_length=1, max_length=180)
+    status: str = Field(default="active", max_length=40)
+    description: str | None = Field(default=None, max_length=5000)
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class ResourcePatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=180)
+    status: str | None = Field(default=None, max_length=40)
+    description: str | None = Field(default=None, max_length=5000)
+    details: dict[str, Any] | None = None
+
+
+class ResourceOut(ResourceIn):
+    id: int
+    resource_type: str
+    organization_id: int
+    created_at: datetime
+    updated_at: datetime
     model_config = ConfigDict(from_attributes=True)

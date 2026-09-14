@@ -1,6 +1,6 @@
 # Production AWS Terraform blueprint
 
-This directory provisions the production architecture for the custom GPS platform without Traccar:
+This directory provisions the paid production architecture for the custom GPS platform without Traccar. It is deliberately blocked by default to protect Free Tier credits. Use the single-EC2 pilot stack in `infra/terraform` for the current deployment.
 
 - VPC with public/private subnets and optional NAT gateways
 - ECS Fargate API and custom TCP telemetry gateway
@@ -15,6 +15,7 @@ The existing low-cost EC2 deployment remains in `infra/terraform` and is not cha
 
 ```bash
 cp terraform.tfvars.example terraform.tfvars
+# Set enable_production_platform = true only after approving recurring costs.
 terraform init
 terraform validate
 terraform plan -out=tfplan

@@ -1,11 +1,12 @@
 services:
   frontend:
     build:
-      context: ./frontend
-      args:
-        VITE_API_URL: ""
+      context: .
+      dockerfile: apps/web-console/Dockerfile
+    environment:
+      BACKEND_INTERNAL_URL: http://api:8000
     ports:
-      - "80:80"
+      - "80:3000"
     depends_on:
       - api
   api:

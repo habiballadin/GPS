@@ -2,6 +2,10 @@ aws_region = "ap-south-1"
 project_name = "gps-fleet"
 environment = "production"
 
+# Keep false for the credit-conserving pilot. This stack deliberately refuses
+# to plan until a paid production deployment has been explicitly approved.
+enable_production_platform = false
+
 # Push these images to the ECR URLs printed by `terraform output`.
 api_image_tag = "latest"
 telemetry_image_tag = "latest"

@@ -2,6 +2,17 @@ variable "aws_region" {
   type    = string
   default = "ap-south-1"
 }
+
+variable "enable_production_platform" {
+  description = "Explicit acknowledgement required before planning the paid production platform."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = var.enable_production_platform
+    error_message = "The production platform creates chargeable resources. Deploy the single-EC2 pilot stack in infra/terraform instead. Set enable_production_platform=true only after approving its costs."
+  }
+}
 variable "project_name" {
   type    = string
   default = "gps-fleet"

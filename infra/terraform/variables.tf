@@ -20,8 +20,9 @@ variable "repository_ref" {
 }
 
 variable "instance_type" {
-  type    = string
-  default = "t3.small"
+  description = "Keep this at t3.micro for the Free Tier / credit-conserving pilot."
+  type        = string
+  default     = "t3.micro"
 }
 
 variable "admin_cidr" {
@@ -36,6 +37,19 @@ variable "ssh_key_name" {
 }
 
 variable "root_volume_gb" {
-  type    = number
-  default = 30
+  description = "Small gp3 boot volume for the pilot host."
+  type        = number
+  default     = 20
+}
+
+variable "alert_email" {
+  description = "Optional email endpoint for SNS alerts. The address must be confirmed after apply."
+  type        = string
+  default     = ""
+}
+
+variable "force_destroy_storage" {
+  description = "Allow Terraform to delete S3 objects during destroy. Keep false to protect telemetry data."
+  type        = bool
+  default     = false
 }

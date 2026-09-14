@@ -6,8 +6,8 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from .db import Base, engine, get_db
 from .gateway import start_servers
-from .models import Alert, Driver, Geofence, Organization, Position, Trip, User, Vehicle
-from .schemas import DriverIn, DriverOut, GeofenceIn, GeofenceOut, LoginIn, PositionOut, RegisterIn, TokenOut, TripIn, TripOut, VehicleIn, VehicleOut
+from .models import Alert, Driver, Geofence, Organization, Position, ResourceRecord, Trip, User, Vehicle
+from .schemas import DriverIn, DriverOut, GeofenceIn, GeofenceOut, LoginIn, PositionOut, RegisterIn, ResourceIn, ResourceOut, ResourcePatch, RESOURCE_TYPES, TokenOut, TripIn, TripOut, VehicleIn, VehicleOut
 from .security import current_user, hash_password, token_for, verify_password
 
 
@@ -22,6 +22,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="GPS Fleet Backend", version="1.0.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000", "http://127.0.0.1:3000"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+SUPPORTED_RESOURCES = set(RESOURCE_TYPES.__args__)
+
+
+def resource_or_400(resource_type: str) -> str:
+    if resource_type not in SUPPORTED_RESOURCES:
+        raise HTTPException(400, f"Unsupported resource type: {resource_type}")
+    return resource_type
 
 
 @app.get("/health")
@@ -113,6 +121,46 @@ def create_geofence(body: GeofenceIn, user: User = Depends(current_user), db: Se
 @app.get("/api/v1/geofences", response_model=list[GeofenceOut])
 def list_geofences(user: User = Depends(current_user), db: Session = Depends(get_db)):
     return db.query(Geofence).filter(Geofence.organization_id == user.organization_id, Geofence.active.is_(True)).all()
+
+
+@app.get("/api/v1/resources/{resource_type}", response_model=list[ResourceOut])
+def list_resources(resource_type: str, limit: int = Query(100, ge=1, le=500), user: User = Depends(current_user), db: Session = Depends(get_db)):
+    kind = resource_or_400(resource_type)
+    return db.query(ResourceRecord).filter(ResourceRecord.organization_id == user.organization_id, ResourceRecord.resource_type == kind).order_by(ResourceRecord.updated_at.desc()).limit(limit).all()
+
+
+@app.post("/api/v1/resources/{resource_type}", response_model=ResourceOut, status_code=201)
+def create_resource(resource_type: str, body: ResourceIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    kind = resource_or_400(resource_type)
+    record = ResourceRecord(resource_type=kind, organization_id=user.organization_id, **body.model_dump())
+    db.add(record); db.commit(); db.refresh(record)
+    return record
+
+
+@app.get("/api/v1/resources/{resource_type}/{resource_id}", response_model=ResourceOut)
+def get_resource(resource_type: str, resource_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    kind = resource_or_400(resource_type)
+    record = db.query(ResourceRecord).filter(ResourceRecord.id == resource_id, ResourceRecord.resource_type == kind, ResourceRecord.organization_id == user.organization_id).first()
+    if not record: raise HTTPException(404, "Resource not found")
+    return record
+
+
+@app.patch("/api/v1/resources/{resource_type}/{resource_id}", response_model=ResourceOut)
+def update_resource(resource_type: str, resource_id: int, body: ResourcePatch, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    kind = resource_or_400(resource_type)
+    record = db.query(ResourceRecord).filter(ResourceRecord.id == resource_id, ResourceRecord.resource_type == kind, ResourceRecord.organization_id == user.organization_id).first()
+    if not record: raise HTTPException(404, "Resource not found")
+    for field, value in body.model_dump(exclude_unset=True).items(): setattr(record, field, value)
+    db.commit(); db.refresh(record)
+    return record
+
+
+@app.delete("/api/v1/resources/{resource_type}/{resource_id}", status_code=204)
+def delete_resource(resource_type: str, resource_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    kind = resource_or_400(resource_type)
+    record = db.query(ResourceRecord).filter(ResourceRecord.id == resource_id, ResourceRecord.resource_type == kind, ResourceRecord.organization_id == user.organization_id).first()
+    if not record: raise HTTPException(404, "Resource not found")
+    db.delete(record); db.commit()
 
 
 @app.websocket("/api/v1/ws/live")

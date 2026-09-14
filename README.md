@@ -42,12 +42,12 @@ Expose TCP ports 5001 and 5002 directly to the internet or through a TCP load ba
 ## Frontend
 
 ```bash
-cd frontend
+cd apps/web-console
 npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`. Set `VITE_API_URL` if the API is not running on `http://localhost:8000`.
+Open `http://localhost:3000`. The Next.js console proxies `/api` to the FastAPI service when run through Docker Compose.
 
 ## AWS deployment
 

@@ -1,20 +1,36 @@
+# Python
 .venv/
 __pycache__/
 *.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Database
 gps.db
+
+# Env
 .env
-frontend/node_modules/
-frontend/dist/
-frontend/.env.local
+
+# Node
+node_modules/
+.next/
+*.env.local
+
+# Terraform
 infra/terraform/.terraform/
+infra/terraform/.terraform.lock.hcl
 infra/terraform/terraform.tfvars
 infra/terraform/*.tfstate
 infra/terraform/*.tfstate.*
 infra/terraform/tfplan
 infra/terraform/platform/.terraform/
+infra/terraform/platform/.terraform.lock.hcl
 infra/terraform/platform/terraform.tfvars
 infra/terraform/platform/*.tfstate
 infra/terraform/platform/*.tfstate.*
 infra/terraform/platform/tfplan
+
+# SSH keys
 gps-ec2-deploy
 gps-ec2-deploy.pub
+*.pem
