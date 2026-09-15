@@ -8,7 +8,11 @@ from app import models  # noqa: F401
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
 if config.config_file_name:
-    fileConfig(config.config_file_name)
+    try:
+        fileConfig(config.config_file_name)
+    except (KeyError, ValueError):
+        # Keep migrations runnable with the minimal production config.
+        pass
 target_metadata = Base.metadata
 
 def run_migrations_offline():
