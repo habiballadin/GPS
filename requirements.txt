@@ -6,6 +6,7 @@ PyJWT==2.10.1
 passlib==1.7.4
 psycopg[binary]==3.2.3
 httpx==0.28.1
+python-multipart==0.0.20
 pytest==8.3.4
 alembic==1.14.1
 redis==5.2.1
