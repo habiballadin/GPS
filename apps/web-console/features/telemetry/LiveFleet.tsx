@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Map as LeafletMap, LayerGroup } from 'leaflet'
+// Leaflet provides this stylesheet for runtime loading but no TypeScript declarations.
+// @ts-expect-error -- CSS side-effect imports are handled by the Next.js bundler.
 import 'leaflet/dist/leaflet.css'
 import { useAuth } from '@/components/providers/AuthProvider'
 
