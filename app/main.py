@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 import asyncio
 from datetime import datetime, timedelta, timezone
-from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -228,6 +228,36 @@ def summary(user: User = Depends(current_user), db: Session = Depends(get_db)):
     active = sum(1 for v in vehicles if v.last_seen_at and v.last_seen_at.timestamp() >= cutoff)
     alerts = db.query(func.count(Alert.id)).filter(Alert.organization_id == user.organization_id, Alert.acknowledged.is_(False)).scalar() or 0
     return {"total_vehicles": len(vehicles), "online_vehicles": active, "offline_vehicles": len(vehicles) - active, "open_alerts": alerts}
+
+
+@app.get("/api/v1/analytics/overview")
+def analytics_overview(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    vehicles = db.query(Vehicle).filter(Vehicle.organization_id == user.organization_id).all()
+    positions = db.query(Position).filter(Position.organization_id == user.organization_id).count()
+    alerts = db.query(Alert).filter(Alert.organization_id == user.organization_id).count()
+    trips = db.query(Trip).filter(Trip.organization_id == user.organization_id).count()
+    return {"vehicles": len(vehicles), "active_vehicles": sum(1 for v in vehicles if v.active), "positions": positions, "alerts": alerts, "trips": trips, "protocols": {protocol: sum(1 for v in vehicles if v.protocol == protocol) for protocol in {v.protocol for v in vehicles}}}
+
+
+@app.get("/api/v1/reports/fleet.csv")
+def fleet_report_csv(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    rows = ["vehicle_id,name,imei,protocol,active,last_seen_at"]
+    for vehicle in db.query(Vehicle).filter(Vehicle.organization_id == user.organization_id).order_by(Vehicle.id).all():
+        rows.append(",".join(str(value or "") for value in [vehicle.id, vehicle.name, vehicle.imei, vehicle.protocol, vehicle.active, vehicle.last_seen_at]))
+    return Response("\n".join(rows), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=fleet-report.csv"})
+
+
+@app.get("/api/v1/notifications", response_model=list[ResourceOut])
+def list_notifications(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    return db.query(ResourceRecord).filter(ResourceRecord.organization_id == user.organization_id, ResourceRecord.resource_type == "notifications").order_by(ResourceRecord.updated_at.desc()).limit(200).all()
+
+
+@app.post("/api/v1/notifications/preferences", response_model=ResourceOut)
+def save_notification_preferences(body: ResourceIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    existing = db.query(ResourceRecord).filter(ResourceRecord.organization_id == user.organization_id, ResourceRecord.resource_type == "notification_preferences", ResourceRecord.name == body.name).first()
+    if existing:
+        existing.status = body.status; existing.details = body.details; existing.description = body.description; db.commit(); db.refresh(existing); return existing
+    record = ResourceRecord(organization_id=user.organization_id, resource_type="notification_preferences", **body.model_dump()); db.add(record); db.commit(); db.refresh(record); return record
 
 
 @app.get("/api/v1/alerts")

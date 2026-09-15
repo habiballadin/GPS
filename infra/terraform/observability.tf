@@ -158,12 +158,14 @@ resource "aws_sqs_queue_policy" "allow_eventbridge" {
 
 resource "aws_ecr_repository" "app" {
   name                 = "${var.project_name}-app"
+  force_delete         = true
   image_tag_mutability = "MUTABLE"
   image_scanning_configuration { scan_on_push = true }
 }
 
 resource "aws_ecr_repository" "web" {
   name                 = "${var.project_name}-web-console"
+  force_delete         = true
   image_tag_mutability = "MUTABLE"
   image_scanning_configuration { scan_on_push = true }
 }

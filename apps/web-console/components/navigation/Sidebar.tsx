@@ -4,7 +4,7 @@ import Link from 'next/link'
 
 const groups = [
   { label: 'Command center', items: [['Dashboard', '/dashboard'], ['Live operations', '/live-map'], ['Alerts', '/alerts'], ['AI copilot', '/ai']] },
-  { label: 'Fleet', items: [['Vehicles', '/vehicles'], ['Trailers', '/trailers'], ['Equipment', '/equipment'], ['Devices', '/devices'], ['Geofences', '/geofences']] },
+  { label: 'Fleet', items: [['Fleet overview', '/fleet'], ['Vehicles', '/vehicles'], ['Assignments', '/fleet/assignments'], ['Inspections', '/fleet/inspections'], ['Vehicle groups', '/fleet/groups'], ['Trailers', '/trailers'], ['Equipment', '/equipment'], ['Devices', '/devices'], ['Geofences', '/geofences']] },
   { label: 'Operations', items: [['Dispatch board', '/dispatch'], ['Trips', '/trips'], ['Orders', '/orders'], ['Routes', '/routes'], ['Stops', '/stops']] },
   { label: 'Control', items: [['Maintenance', '/maintenance'], ['Safety', '/safety'], ['Finance', '/finance'], ['Reports', '/reports'], ['Settings', '/settings']] },
 ] as const

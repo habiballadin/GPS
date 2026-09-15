@@ -13,6 +13,11 @@ class Settings(BaseSettings):
     smtp_password: str | None = None
     smtp_from: str = "no-reply@gps-fleet.local"
     smtp_starttls: bool = True
+    currency_code: str = "INR"
+    currency_symbol: str = "₹"
+    locale: str = "en-IN"
+    timezone: str = "Asia/Kolkata"
+    audit_retention_days: int = 365
     tcp_teltonika_host: str = "0.0.0.0"
     tcp_teltonika_port: int = 5001
     tcp_gt06_host: str = "0.0.0.0"

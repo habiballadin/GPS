@@ -1,2 +1,2 @@
-import { DomainPage } from '@/components/layout/DomainPage'
-export default function AnalyticsPage() { return <DomainPage title="Analytics" description="Fleet performance trends and operational intelligence." /> }
+import { AnalyticsDashboard } from '@/features/reports/AnalyticsDashboard'
+export default function AnalyticsPage() { return <AnalyticsDashboard /> }
