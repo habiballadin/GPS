@@ -38,11 +38,72 @@ const ALERT_COLORS: Record<string, string> = {
   door_open: 'bg-slate-200 text-slate-800',
 }
 
+// Distinct palette — enough for a large fleet, cycles if needed
+const VEHICLE_PALETTE = [
+  '#2563eb', // blue
+  '#16a34a', // green
+  '#dc2626', // red
+  '#9333ea', // purple
+  '#ea580c', // orange
+  '#0891b2', // cyan
+  '#db2777', // pink
+  '#ca8a04', // yellow
+  '#059669', // emerald
+  '#7c3aed', // violet
+]
+
+function vehicleColor(vehicleIndex: number): string {
+  return VEHICLE_PALETTE[vehicleIndex % VEHICLE_PALETTE.length]
+}
+
+// SVG car icon rotated to heading, colored per vehicle, with alert ring
+function makeVehicleIcon(L: typeof import('leaflet'), color: string, heading: number, alert: 'sos' | 'crash' | 'towing' | 'jamming' | null, protocol: string) {
+  const isTeltonika = protocol === 'teltonika'
+  // Car SVG (top-down view) or truck for gt06
+  const shape = isTeltonika
+    ? `<path d="M8 2 C6 2 4 4 3 6 L2 10 L2 14 L3 14 L3 15 L5 15 L5 14 L11 14 L11 15 L13 15 L13 14 L14 14 L14 10 L13 6 C12 4 10 2 8 2 Z" fill="${color}" stroke="white" stroke-width="1"/>
+       <rect x="3.5" y="6" width="9" height="5" rx="1" fill="white" fill-opacity="0.25"/>
+       <circle cx="4.5" cy="13.5" r="1.2" fill="#1e293b"/>
+       <circle cx="11.5" cy="13.5" r="1.2" fill="#1e293b"/>`
+    : `<rect x="3" y="3" width="10" height="12" rx="2" fill="${color}" stroke="white" stroke-width="1"/>
+       <rect x="4" y="4" width="8" height="5" rx="1" fill="white" fill-opacity="0.25"/>
+       <circle cx="5" cy="14" r="1.2" fill="#1e293b"/>
+       <circle cx="11" cy="14" r="1.2" fill="#1e293b"/>`
+
+  const alertRing = alert === 'sos' || alert === 'crash'
+    ? `<circle cx="8" cy="8" r="10" fill="none" stroke="#ef4444" stroke-width="2.5" stroke-dasharray="4 2" opacity="0.9"/>`
+    : alert === 'towing'
+    ? `<circle cx="8" cy="8" r="10" fill="none" stroke="#f97316" stroke-width="2" stroke-dasharray="4 2" opacity="0.8"/>`
+    : alert === 'jamming'
+    ? `<circle cx="8" cy="8" r="10" fill="none" stroke="#a855f7" stroke-width="2" stroke-dasharray="4 2" opacity="0.8"/>`
+    : ''
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 16 16"
+    style="transform:rotate(${heading}deg);transform-origin:center;filter:drop-shadow(0 1px 3px rgba(0,0,0,.5))">
+    ${alertRing}${shape}
+  </svg>`
+
+  return L.divIcon({
+    className: '',
+    html: svg,
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+    tooltipAnchor: [14, 0],
+  })
+}
+
 function RealMap({ positions, trails, vehicles }: { positions: Position[]; trails: TrailMap; vehicles: Vehicle[] }) {
   const element = useRef<HTMLDivElement>(null)
   const map = useRef<LeafletMap | null>(null)
   const markerLayer = useRef<LayerGroup | null>(null)
   const trailLayer = useRef<LayerGroup | null>(null)
+
+  // Stable vehicle index → color mapping
+  const colorMap = useMemo(() => {
+    const m = new Map<number, string>()
+    vehicles.forEach((v, i) => m.set(v.id, vehicleColor(i)))
+    return m
+  }, [vehicles])
 
   useEffect(() => {
     let disposed = false
@@ -62,26 +123,36 @@ function RealMap({ positions, trails, vehicles }: { positions: Position[]; trail
       markerLayer.current.clearLayers()
       trailLayer.current.clearLayers()
 
-      // Draw trails
+      // Draw trails — colored per vehicle
       Object.entries(trails).forEach(([vidStr, pts]) => {
         if (pts.length < 2) return
+        const vid = Number(vidStr)
+        const color = colorMap.get(vid) ?? '#174b3c'
         const coords = pts.map(p => [p.latitude, p.longitude] as [number, number])
-        L.polyline(coords, { color: '#174b3c', weight: 3, opacity: 0.5 }).addTo(trailLayer.current!)
+        L.polyline(coords, { color, weight: 3, opacity: 0.45 }).addTo(trailLayer.current!)
       })
 
-      // Draw markers
+      // Draw vehicle icons
       positions.forEach(p => {
-        const color = p.sos ? '#ef4444' : p.crash ? '#b91c1c' : p.towing ? '#f97316' : p.jamming ? '#a855f7' : p.ignition ? '#b7e35f' : '#94a3b8'
-        const name = vehicles.find(v => v.id === p.vehicle_id)?.name ?? p.device_imei
-        L.circleMarker([p.latitude, p.longitude], { radius: 9, color: '#174b3c', fillColor: color, fillOpacity: 1, weight: 3 })
-          .bindTooltip(`${name} · ${p.speed_kph.toFixed(0)} km/h`)
+        const vehicle = vehicles.find(v => v.id === p.vehicle_id)
+        const color = colorMap.get(p.vehicle_id) ?? '#64748b'
+        const name = vehicle?.name ?? p.device_imei
+        const protocol = vehicle?.protocol ?? 'teltonika'
+        const alert = p.sos ? 'sos' : p.crash ? 'crash' : p.towing ? 'towing' : p.jamming ? 'jamming' : null
+        const icon = makeVehicleIcon(L, color, p.heading ?? 0, alert, protocol)
+
+        const statusLine = p.ignition ? `🔑 ${p.speed_kph.toFixed(0)} km/h` : '⭕ IGN OFF'
+        const alertLine = alert ? ` ⚠ ${alert.toUpperCase()}` : ''
+
+        L.marker([p.latitude, p.longitude], { icon })
+          .bindTooltip(`<strong>${name}</strong><br/>${statusLine}${alertLine}`, { direction: 'right', offset: [14, 0] })
           .addTo(markerLayer.current!)
       })
 
       if (positions.length === 1) map.current.setView([positions[0].latitude, positions[0].longitude], 13)
       else if (positions.length > 1) map.current.fitBounds(L.latLngBounds(positions.map(p => [p.latitude, p.longitude] as [number, number])), { padding: [30, 30] })
     })
-  }, [positions, trails, vehicles])
+  }, [positions, trails, vehicles, colorMap])
 
   return <div ref={element} className="min-h-[520px] w-full" />
 }
@@ -182,11 +253,13 @@ export function LiveFleet() {
           <div className="overflow-hidden rounded-2xl bg-[#dfe9dc] shadow-panel">
             <RealMap positions={positions} trails={trails} vehicles={vehicles} />
             <div className="flex flex-wrap gap-3 p-3 text-xs text-slate-600">
-              {[['#b7e35f','Ignition on'],['#94a3b8','Ignition off'],['#f97316','Towing'],['#a855f7','Jamming'],['#ef4444','SOS'],['#b91c1c','Crash']].map(([c,l]) => (
-                <span key={l} className="flex items-center gap-1">
-                  <span className="inline-block h-3 w-3 rounded-full border border-[#174b3c]" style={{ background: c }} /> {l}
+              {vehicles.map((v, i) => (
+                <span key={v.id} className="flex items-center gap-1.5">
+                  <span className="inline-block h-3 w-3 rounded-sm" style={{ background: vehicleColor(i) }} />
+                  {v.name}
                 </span>
               ))}
+              <span className="ml-2 flex items-center gap-1 text-slate-400">· dashed ring = alert</span>
             </div>
           </div>
 
