@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from .db import Base, engine, get_db
-from .gateway import start_servers
+from .gateway import start_servers, send_device_command
 from .models import Alert, Driver, Geofence, OneTimeToken, Organization, Position, RefreshSession, ResourceRecord, Trip, User, Vehicle, VehicleAssignment
 from .schemas import AssignmentIn, AssignmentOut, DriverIn, DriverOut, GeofenceIn, GeofenceOut, InvitationAccept, InvitationCreate, LoginIn, MaintenanceIn, PasswordResetConfirm, PasswordResetRequest, PositionOut, RefreshIn, RegisterIn, ResourceIn, ResourceOut, ResourcePatch, RESOURCE_TYPES, TokenOut, TripIn, TripOut, UserCreate, UserOut, UserRolePatch, VehicleIn, VehicleOut, VehiclePatch
 from .security import current_user, hash_password, random_token, require_roles, token_for, token_hash, verify_password
@@ -205,6 +205,18 @@ def update_vehicle(vehicle_id: int, body: VehiclePatch, user: User = Depends(req
     for field, value in body.model_dump(exclude_unset=True).items(): setattr(vehicle, field, value)
     db.commit(); db.refresh(vehicle)
     return vehicle
+
+
+@app.post("/api/v1/vehicles/{vehicle_id}/command")
+async def send_command(vehicle_id: int, body: dict, user: User = Depends(require_roles("admin", "manager")), db: Session = Depends(get_db)):
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id, Vehicle.organization_id == user.organization_id).first()
+    if not vehicle: raise HTTPException(404, "Vehicle not found")
+    if vehicle.protocol != "teltonika": raise HTTPException(400, "Commands only supported for Teltonika devices")
+    command = body.get("command", "").strip()
+    if not command: raise HTTPException(400, "command is required")
+    result = await send_device_command(vehicle.imei, command)
+    if result is None: raise HTTPException(503, "Device not connected")
+    return {"imei": vehicle.imei, "command": command, "response": result}
 
 
 @app.delete("/api/v1/vehicles/{vehicle_id}", status_code=204)

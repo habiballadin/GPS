@@ -26,13 +26,35 @@ def _u32(b: bytes) -> int:
     return struct.unpack(">I", b)[0]
 
 
-def _crc16(data: bytes) -> int:
+def _crc16_ibm(data: bytes) -> int:
+    """CRC-16/IBM used by Teltonika Codec 8/8E AVL frames."""
     crc = 0
     for byte in data:
-        crc ^= byte << 8
+        crc ^= byte
         for _ in range(8):
-            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
+            crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
     return crc
+
+
+def decode_codec12_response(packet: bytes) -> str:
+    """Decode a Codec 12 or 13 command response from a Teltonika device."""
+    if len(packet) < 12 or packet[:4] != b"\x00\x00\x00\x00":
+        raise ValueError("invalid Teltonika frame")
+    data_len = _u32(packet[4:8])
+    data = packet[8:8 + data_len]
+    codec = data[0]
+    if codec not in (0x0C, 0x0D):
+        raise ValueError("not a Codec 12/13 response")
+    p = 1
+    if data[p] != 1: raise ValueError("unexpected quantity")
+    p += 1
+    if data[p] != 0x06: raise ValueError("not a response type")
+    p += 1
+    if codec == 0x0D:
+        imei_len = int.from_bytes(data[p:p + 4], "big"); p += 4
+        p += imei_len  # skip IMEI
+    resp_len = int.from_bytes(data[p:p + 4], "big"); p += 4
+    return data[p:p + resp_len].decode("ascii", errors="replace")
 
 
 def decode_teltonika(packet: bytes, imei: str) -> tuple[NormalizedPosition, ...]:
@@ -46,7 +68,7 @@ def decode_teltonika(packet: bytes, imei: str) -> tuple[NormalizedPosition, ...]
     data_len = _u32(packet[4:8])
     data = packet[8:8 + data_len]
     crc = packet[8 + data_len:12 + data_len]
-    if len(data) != data_len or len(crc) != 4 or data[1] != packet[8 + data_len - 1] or int.from_bytes(crc[-2:], "big") != _crc16(data):
+    if len(data) != data_len or len(crc) != 4 or data[1] != packet[8 + data_len - 1] or int.from_bytes(crc[-2:], "big") != _crc16_ibm(data):
         raise ValueError("invalid Teltonika frame length")
     codec, count = data[0], data[1]
     if codec not in (0x08, 0x8E):
