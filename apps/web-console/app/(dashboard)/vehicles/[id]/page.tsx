@@ -9,6 +9,7 @@ type Vehicle = {
   id: number; name: string; imei: string; protocol: string
   active: boolean; last_seen_at?: string; overspeed_kph?: number
 }
+type Activity = { id: string; type: string; title: string; status: string; occurred_at: string; detail: string }
 
 function fmt(ms: number): string {
   const h = Math.floor(ms / 3_600_000)
@@ -22,6 +23,7 @@ export default function VehicleDetailPage() {
   const [vehicle, setVehicle] = useState<Vehicle | null>(null)
   const [history, setHistory] = useState<ReplayPoint[]>([])
   const [loading, setLoading] = useState(false)
+  const [activity, setActivity] = useState<Activity[]>([])
 
   // Default range: last 24 hours
   const defaultSince = () => {
@@ -47,6 +49,7 @@ export default function VehicleDetailPage() {
     void fetch(`/api/v1/vehicles/${params.id}`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.ok ? r.json() : null).then(setVehicle)
     void fetchHistory(since, until)
+    void fetch(`/api/v1/vehicles/${params.id}/activity?limit=100`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.ok ? r.json() : []).then(setActivity)
   }, [params.id, token]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const stats = useMemo(() => {
@@ -146,6 +149,7 @@ export default function VehicleDetailPage() {
 
       {/* Route replay */}
       <RouteReplay points={history} overspeedKph={vehicle.overspeed_kph ?? 120} />
+      <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-panel"><div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Vehicle history</p><h2 className="mt-2 text-xl font-bold">Operational timeline</h2></div><span className="rounded-full bg-mist px-3 py-1 text-xs font-bold text-forest">{activity.length} events</span></div><div className="mt-5 space-y-4">{activity.map(item => <article className="flex gap-4" key={item.id}><div className="mt-1 h-3 w-3 shrink-0 rounded-full bg-forest ring-4 ring-lime/30" /><div className="min-w-0 flex-1 border-b border-slate-100 pb-4"><div className="flex flex-wrap items-center justify-between gap-2"><div><span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{item.type}</span><h3 className="font-bold">{item.title}</h3></div><span className="rounded-full bg-mist px-2 py-1 text-[10px] font-bold uppercase text-forest">{item.status}</span></div><p className="mt-1 text-sm text-slate-500">{item.detail}</p><time className="mt-2 block text-xs text-slate-400">{new Date(item.occurred_at).toLocaleString()}</time></div></article>)}{!activity.length && <p className="py-8 text-center text-sm text-slate-400">No operational history recorded yet.</p>}</div></div>
     </section>
   )
 }

@@ -1,2 +1,2 @@
-import { DomainPage } from '@/components/layout/DomainPage'
-export default function AiPage() { return <DomainPage resourceType="ai" title="AI copilot" description="Grounded operational answers and approval-based recommendations." /> }
+import { AIFleetWorkspace } from '@/features/ai/AIFleetWorkspace'
+export default function AiPage() { return <AIFleetWorkspace /> }

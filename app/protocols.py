@@ -5,6 +5,7 @@ map its output to NormalizedPosition; the rest of the system remains unchanged.
 """
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Callable
 import struct
 
 
@@ -33,6 +34,9 @@ class NormalizedPosition:
     battery_mv: int = 0
     fuel_level: int = 0       # IO element 9 — analog input 1 (fuel sensor)
     odometer_m: int = 0       # IO element 16000 if available
+
+
+ProtocolDecoder = Callable[[bytes, str], tuple[NormalizedPosition, ...]]
 
 
 def _u32(b: bytes) -> int:
@@ -176,3 +180,21 @@ def decode_gt06(packet: bytes, imei: str) -> tuple[NormalizedPosition, ...]:
     if not (course_status & 0x8000): lat = -lat
     if course_status & 0x4000: lon = -lon
     return (NormalizedPosition(imei, recorded, lat, lon, speed_kph=speed, heading=course_status & 0x03FF, satellites=sats, event_id=f"{recorded.isoformat()}-{lat}-{lon}"),)
+
+
+# Protocol adapters are registered here; ingestion code only depends on this map.
+PROTOCOL_DECODERS: dict[str, ProtocolDecoder] = {
+    "teltonika": decode_teltonika,
+    "gt06": decode_gt06,
+}
+
+
+def supported_protocols() -> list[str]:
+    return sorted(PROTOCOL_DECODERS)
+
+
+def decode_packet(protocol: str, packet: bytes, imei: str) -> tuple[NormalizedPosition, ...]:
+    decoder = PROTOCOL_DECODERS.get(protocol)
+    if not decoder:
+        raise ValueError(f"unsupported protocol adapter: {protocol}")
+    return decoder(packet, imei)

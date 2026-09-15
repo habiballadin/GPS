@@ -2,8 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Map as LeafletMap, LayerGroup } from 'leaflet'
-// Leaflet provides this stylesheet for runtime loading but no TypeScript declarations.
-// @ts-expect-error -- CSS side-effect imports are handled by the Next.js bundler.
+// Leaflet provides this stylesheet for runtime loading.
 import 'leaflet/dist/leaflet.css'
 import { useAuth } from '@/components/providers/AuthProvider'
 
@@ -17,6 +16,7 @@ type Position = {
   ext_voltage_mv: number; battery_mv: number; fuel_level: number
 }
 type WsAlert = { kind: string; vehicle_id: number; message: string; created_at: string }
+type WsTelemetry = { vehicle_id: number; event_type: string; recorded_at: string; payload?: { speed_kph?: number; ignition?: boolean } }
 type TrailMap = Record<number, Position[]>
 
 const ALERT_COLORS: Record<string, string> = {
@@ -184,12 +184,14 @@ export function LiveFleet() {
   const [trails, setTrails] = useState<TrailMap>({})
   const [connected, setConnected] = useState(false)
   const [alerts, setAlerts] = useState<(WsAlert & { id: number })[]>([])
+  const [telemetryEvents, setTelemetryEvents] = useState<(WsTelemetry & { id: number })[]>([])
   const [immobLoading, setImmobLoading] = useState<number | null>(null)
   const [immobResult, setImmobResult] = useState<Record<number, string>>({})
   const [etaVehicle, setEtaVehicle] = useState<number | null>(null)
   const [etaDest, setEtaDest] = useState({ lat: '', lon: '' })
   const [etaResult, setEtaResult] = useState<string | null>(null)
   const alertIdRef = useRef(0)
+  const telemetryIdRef = useRef(0)
 
   useEffect(() => {
     if (!token) return
@@ -202,15 +204,19 @@ export function LiveFleet() {
     socket.onclose = () => setConnected(false)
     socket.onerror = () => setConnected(false)
     socket.onmessage = (e) => {
-      const payload = JSON.parse(e.data) as { type: string; data?: Position[]; trails?: TrailMap; alert?: WsAlert }
+      const payload = JSON.parse(e.data) as { type: string; data?: Position[] | WsTelemetry; trails?: TrailMap }
       if (payload.type === 'positions') {
-        setPositions(payload.data ?? [])
+        setPositions((payload.data as Position[] | undefined) ?? [])
         if (payload.trails) setTrails(payload.trails)
       } else if (payload.type === 'alert' && payload.data) {
         const alert = payload.data as unknown as WsAlert
         const id = ++alertIdRef.current
         setAlerts(prev => [{ ...alert, id }, ...prev].slice(0, 20))
         setTimeout(() => setAlerts(prev => prev.filter(a => a.id !== id)), 8000)
+      } else if (payload.type === 'telemetry_event' && payload.data) {
+        const event = payload.data as WsTelemetry
+        const id = ++telemetryIdRef.current
+        setTelemetryEvents(prev => [{ ...event, id }, ...prev].slice(0, 12))
       }
     }
     return () => socket.close()
@@ -256,6 +262,7 @@ export function LiveFleet() {
           )
         })}
       </div>
+      <div className="mb-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-panel"><div className="flex items-center justify-between"><h2 className="text-sm font-bold">Live telemetry events</h2><span className="text-xs text-slate-400">{telemetryEvents.length} recent</span></div><div className="mt-3 flex gap-2 overflow-x-auto pb-1">{telemetryEvents.slice(0, 6).map(event => <div className="min-w-[190px] rounded-xl bg-mist p-3 text-xs" key={event.id}><p className="font-bold text-forest">{event.event_type.replace('.', ' ')}</p><p className="mt-1 text-slate-500">Vehicle #{event.vehicle_id} · {event.payload?.ignition ? `${event.payload.speed_kph?.toFixed(0) ?? 0} km/h` : 'ignition off'}</p><time className="mt-1 block text-slate-400">{new Date(event.recorded_at).toLocaleTimeString()}</time></div>)}{!telemetryEvents.length && <p className="text-xs text-slate-400">Waiting for normalized device events…</p>}</div></div>
 
       <div className="mb-8 flex items-end justify-between">
         <div>

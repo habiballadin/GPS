@@ -4,8 +4,9 @@ from math import asin, cos, radians, sin, sqrt
 from sqlalchemy.exc import IntegrityError
 from .config import settings
 from .db import SessionLocal
-from .models import Alert, AutoTrip, Geofence, MaintenanceReminder, Position, RawPacket, Vehicle, VehicleOdometer, now
-from .protocols import decode_gt06, decode_teltonika, decode_codec12_response, NormalizedPosition
+from .models import Alert, AutoTrip, Geofence, MaintenanceReminder, Position, RawPacket, SafetyIncident, TelemetryEvent, Vehicle, VehicleOdometer, now
+from .protocols import decode_codec12_response, decode_packet, NormalizedPosition
+from .live_state import set_vehicle_state
 
 # imei -> asyncio.StreamWriter for connected Teltonika devices
 _teltonika_clients: dict[str, asyncio.StreamWriter] = {}
@@ -19,6 +20,7 @@ _geofence_inside: dict[str, set[int]] = {}
 _idle_state: dict[str, tuple[datetime | None, bool]] = {}
 # org_id -> set of WebSocket connections for real-time alert push
 _alert_subscribers: dict[int, set[asyncio.Queue]] = {}
+_telemetry_subscribers: dict[int, set[asyncio.Queue]] = {}
 
 
 def _subscribe_alerts(org_id: int) -> asyncio.Queue:
@@ -39,10 +41,40 @@ def _push_alert(org_id: int, alert_dict: dict) -> None:
             pass
 
 
+def subscribe_telemetry(org_id: int) -> asyncio.Queue:
+    q: asyncio.Queue = asyncio.Queue(maxsize=200)
+    _telemetry_subscribers.setdefault(org_id, set()).add(q)
+    return q
+
+
+def unsubscribe_telemetry(org_id: int, q: asyncio.Queue) -> None:
+    _telemetry_subscribers.get(org_id, set()).discard(q)
+
+
+def _push_telemetry(org_id: int, event: dict) -> None:
+    for q in list(_telemetry_subscribers.get(org_id, set())):
+        try: q.put_nowait(event)
+        except asyncio.QueueFull: pass
+
+
 def _add_alert(db, org_id: int, vehicle_id: int, kind: str, message: str) -> None:
     a = Alert(organization_id=org_id, vehicle_id=vehicle_id, kind=kind, message=message)
     db.add(a)
+    if kind in {"crash", "sos", "towing", "jamming"}:
+        recent = db.query(SafetyIncident).filter(SafetyIncident.organization_id == org_id, SafetyIncident.vehicle_id == vehicle_id, SafetyIncident.status.in_(("open", "investigating")), SafetyIncident.title == f"Telemetry {kind}").first()
+        if not recent:
+            severity = "critical" if kind in {"crash", "sos"} else "high"
+            db.add(SafetyIncident(organization_id=org_id, vehicle_id=vehicle_id, title=f"Telemetry {kind}", severity=severity, description=message))
+            db.flush()
     _push_alert(org_id, {"kind": kind, "vehicle_id": vehicle_id, "message": message, "created_at": now().isoformat()})
+
+
+def normalized_event_type(position: NormalizedPosition) -> str:
+    if position.crash: return "safety.crash"
+    if position.sos: return "safety.sos"
+    if position.towing or position.jamming: return "security.tamper"
+    if position.ignition: return "position.ignition_on"
+    return "position"
 
 
 def _is_outside_schedule(schedule: str) -> bool:
@@ -93,6 +125,16 @@ def ingest(protocol: str, imei: str, packet: bytes, decoded: tuple[NormalizedPos
             if db.query(Position).filter(Position.device_imei == imei, Position.event_id == p.event_id).first():
                 continue
 
+            telemetry_row = TelemetryEvent(
+                organization_id=org_id, vehicle_id=vid, device_imei=imei,
+                source_protocol=protocol, event_key=p.event_id,
+                event_type=normalized_event_type(p), recorded_at=p.recorded_at,
+                latitude=p.latitude, longitude=p.longitude,
+                payload={"speed_kph": p.speed_kph, "heading": p.heading, "ignition": p.ignition, "satellites": p.satellites, "fuel_level": p.fuel_level, "odometer_m": p.odometer_m, "harsh_braking": p.harsh_braking, "harsh_acceleration": p.harsh_acceleration, "harsh_cornering": p.harsh_cornering, "door_open": p.door_open, "battery_mv": p.battery_mv, "ext_voltage_mv": p.ext_voltage_mv},
+            )
+            db.add(telemetry_row)
+            _push_telemetry(org_id, {"vehicle_id": vid, "device_imei": imei, "source_protocol": protocol, "event_key": p.event_id, "event_type": normalized_event_type(p), "recorded_at": p.recorded_at.isoformat(), "latitude": p.latitude, "longitude": p.longitude, "payload": {"speed_kph": p.speed_kph, "ignition": p.ignition}})
+
             pos_row = Position(
                 organization_id=org_id, vehicle_id=vid,
                 device_imei=imei, event_id=p.event_id, recorded_at=p.recorded_at,
@@ -106,6 +148,7 @@ def ingest(protocol: str, imei: str, packet: bytes, decoded: tuple[NormalizedPos
                 fuel_level=p.fuel_level, odometer_m=p.odometer_m,
             )
             db.add(pos_row); db.flush()
+            set_vehicle_state(org_id, vid, {"vehicle_id": vid, "device_imei": imei, "protocol": protocol, "recorded_at": p.recorded_at.isoformat(), "latitude": p.latitude, "longitude": p.longitude, "speed_kph": p.speed_kph, "heading": p.heading, "ignition": p.ignition, "satellites": p.satellites, "fuel_level": p.fuel_level, "battery_mv": p.battery_mv, "event_type": normalized_event_type(p)})
 
             # --- Configurable overspeed ---
             if p.speed_kph > vehicle.overspeed_kph:
@@ -203,7 +246,7 @@ def ingest(protocol: str, imei: str, packet: bytes, decoded: tuple[NormalizedPos
             prev_inside = _geofence_inside.get(imei, set())
             now_inside: set[int] = set()
             for fence in fences:
-                if _distance_m(p.latitude, p.longitude, fence.latitude, fence.longitude) <= fence.radius_m:
+                if _inside_geofence(fence, p.latitude, p.longitude):
                     now_inside.add(fence.id)
             for fence in fences:
                 was = fence.id in prev_inside
@@ -294,6 +337,32 @@ def _distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return earth * 2 * asin(sqrt(a))
 
 
+def _point_in_polygon(lat: float, lon: float, points: list[list[float]]) -> bool:
+    inside = False
+    j = len(points) - 1
+    for i, point in enumerate(points):
+        yi, xi = point[0], point[1]; yj, xj = points[j][0], points[j][1]
+        if ((yi > lat) != (yj > lat)) and (lon < (xj - xi) * (lat - yi) / ((yj - yi) or 1e-12) + xi): inside = not inside
+        j = i
+    return inside
+
+
+def _point_to_segment_m(lat: float, lon: float, a: list[float], b: list[float]) -> float:
+    scale = 111_000.0
+    px, py = lon * scale, lat * scale; ax, ay = a[1] * scale, a[0] * scale; bx, by = b[1] * scale, b[0] * scale
+    dx, dy = bx - ax, by - ay; t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy or 1.0)));
+    return ((px - (ax + t * dx)) ** 2 + (py - (ay + t * dy)) ** 2) ** 0.5
+
+
+def _inside_geofence(fence: Geofence, lat: float, lon: float) -> bool:
+    if fence.geofence_type == "polygon" and fence.geometry:
+        return _point_in_polygon(lat, lon, fence.geometry.get("coordinates", []))
+    if fence.geofence_type == "corridor" and fence.geometry:
+        points = fence.geometry.get("coordinates", [])
+        return any(_point_to_segment_m(lat, lon, points[i], points[i + 1]) <= (fence.corridor_width_m or 0) for i in range(len(points) - 1))
+    return _distance_m(lat, lon, fence.latitude, fence.longitude) <= fence.radius_m
+
+
 def encode_codec12(command: str) -> bytes:
     cmd = command.encode()
     cmd_len = len(cmd).to_bytes(4, "big")
@@ -349,12 +418,12 @@ async def client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, pro
                     except ValueError:
                         pass
                     continue
-                count = ingest(protocol, imei, packet, decode_teltonika(packet, imei))
+                count = ingest(protocol, imei, packet, decode_packet(protocol, packet, imei))
                 writer.write(b"\x00\x00\x00\x01" + count.to_bytes(4, "big"))
             else:
                 frame_start = 3 if packet[:2] == b"\x78\x78" else 4
                 frame_protocol = packet[frame_start]
-                decoded = decode_gt06(packet, imei) if frame_protocol in (0x10, 0x11, 0x12, 0x22) else ()
+                decoded = decode_packet(protocol, packet, imei) if frame_protocol in (0x10, 0x11, 0x12, 0x22) else ()
                 count = ingest(protocol, imei, packet, decoded)
                 writer.write(_gt06_ack(frame_protocol, packet[-6:-4]))
             await writer.drain()
