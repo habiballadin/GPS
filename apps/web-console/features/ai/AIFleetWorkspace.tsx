@@ -1,0 +1,11 @@
+'use client'
+import { useEffect, useState } from 'react'
+import { useAuth } from '@/components/providers/AuthProvider'
+
+type Insight = { vehicle_id: number; vehicle_name: string; risk_score: number; risk_level: string; confidence: number; factors: string[]; recommended_actions: string[] }
+
+export function AIFleetWorkspace() {
+  const { token } = useAuth(); const [items, setItems] = useState<Insight[]>([]); const [loading, setLoading] = useState(true)
+  useEffect(() => { if (!token) return; fetch('/api/v1/ai/fleet-insights', { headers: { Authorization: `Bearer ${token}` } }).then(r => r.ok ? r.json() : []).then(setItems).finally(() => setLoading(false)) }, [token])
+  return <section><div className="mb-8"><p className="mb-2 text-xs font-bold uppercase tracking-[0.2em] text-forest">AI operations</p><h1 className="text-3xl font-bold tracking-tight">Fleet risk copilot</h1><p className="mt-2 text-slate-500">Explainable recommendations generated from telemetry, maintenance, fuel, and safety signals.</p></div>{loading ? <p className="text-slate-500">Analyzing fleet signals…</p> : <div className="grid gap-5 lg:grid-cols-2">{items.map(item => <article key={item.vehicle_id} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-panel"><div className="flex items-start justify-between"><div><h2 className="text-lg font-bold">{item.vehicle_name}</h2><p className="mt-1 text-xs text-slate-500">Confidence {Math.round(item.confidence * 100)}%</p></div><span className={`rounded-full px-3 py-1 text-xs font-bold uppercase ${item.risk_level === 'critical' ? 'bg-red-100 text-red-700' : item.risk_level === 'high' ? 'bg-orange-100 text-orange-700' : item.risk_level === 'medium' ? 'bg-amber-100 text-amber-700' : 'bg-lime/30 text-forest'}`}>{item.risk_level} · {item.risk_score}</span></div><div className="mt-5"><h3 className="text-xs font-bold uppercase tracking-wide text-slate-500">Signals</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm">{item.factors.map(factor => <li key={factor}>{factor}</li>)}</ul></div><div className="mt-5"><h3 className="text-xs font-bold uppercase tracking-wide text-slate-500">Recommended actions</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm">{item.recommended_actions.map(action => <li key={action}>{action}</li>)}</ul></div></article>)}</div>}</section>
+}

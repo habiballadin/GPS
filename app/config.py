@@ -23,6 +23,21 @@ class Settings(BaseSettings):
     tcp_gt06_host: str = "0.0.0.0"
     tcp_gt06_port: int = 5002
     max_packet_bytes: int = 8192
+    evidence_storage_path: str = "./private-evidence"
+    max_evidence_bytes: int = 10 * 1024 * 1024
+    map_provider: str = "none"
+    map_provider_url: str | None = None
+    map_provider_api_key: str | None = None
+    route_provider_name: str = "osrm"
+    route_provider_url: str | None = None
+    route_provider_api_key: str | None = None
+    route_provider_timeout_seconds: float = 5.0
+    report_from_email: str | None = None
+    auto_create_schema: bool = True
+    scheduler_poll_seconds: int = 60
+    redis_url: str | None = None
+    live_state_ttl_seconds: int = 300
+    telemetry_retention_days: int = 365
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

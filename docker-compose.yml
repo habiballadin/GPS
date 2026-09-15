@@ -14,6 +14,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL}
       JWT_SECRET: ${JWT_SECRET}
+      REDIS_URL: redis://redis:6379/0
     expose:
       - "8000"
     ports:
@@ -22,6 +23,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_started
   db:
     image: postgres:16-alpine
     environment:
@@ -35,5 +38,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
 volumes:
   gps_data:
+  redis_data:

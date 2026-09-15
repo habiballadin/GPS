@@ -26,3 +26,11 @@ This app is the Next.js TypeScript frontend for the fleet operations command cen
 5. Connect live positions to `/api/v1/ws/live` with reconnect and stale-data indicators.
 6. Add TanStack Query feature hooks, forms, optimistic updates, and tests.
 7. Add role-aware navigation, audit views, and AI approval flows.
+
+## Routing and ETA
+
+Dispatch route summaries and vehicle ETA use `app/routing.py`. Configure
+`ROUTE_PROVIDER_URL` with an OSRM-compatible provider for road distance and
+traffic-aware durations; without it, the API uses a deterministic haversine
+fallback with a conservative peak-hour traffic factor. Dispatchers can reorder
+pending mapped stops through `POST /api/v1/delivery-orders/{id}/optimize-route`.
