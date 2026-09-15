@@ -17,7 +17,9 @@ def upgrade():
             bind.execute(sa.text("CREATE EXTENSION IF NOT EXISTS timescaledb"))
             bind.execute(sa.text("SELECT create_hypertable('positions', 'recorded_at', if_not_exists => TRUE)"))
         except Exception:
-            pass
+            # TimescaleDB is optional. Roll back the failed extension statement
+            # before continuing with ordinary PostgreSQL indexes.
+            bind.rollback()
     existing = {item["name"] for item in sa.inspect(bind).get_indexes("positions")}
     if "ix_positions_vehicle_recorded" not in existing:
         op.create_index("ix_positions_vehicle_recorded", "positions", ["organization_id", "vehicle_id", "recorded_at"], unique=False)
