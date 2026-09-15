@@ -443,6 +443,13 @@ def list_geofences(user: User = Depends(current_user), db: Session = Depends(get
     return db.query(Geofence).filter(Geofence.organization_id == user.organization_id, Geofence.active.is_(True)).all()
 
 
+@app.delete("/api/v1/geofences/{geofence_id}", status_code=204)
+def delete_geofence(geofence_id: int, user: User = Depends(require_roles("admin", "manager")), db: Session = Depends(get_db)):
+    fence = db.query(Geofence).filter(Geofence.id == geofence_id, Geofence.organization_id == user.organization_id).first()
+    if not fence: raise HTTPException(404, "Geofence not found")
+    fence.active = False; db.commit()
+
+
 @app.get("/api/v1/resources/{resource_type}", response_model=list[ResourceOut])
 def list_resources(resource_type: str, limit: int = Query(100, ge=1, le=500), user: User = Depends(current_user), db: Session = Depends(get_db)):
     kind = resource_or_400(resource_type)
