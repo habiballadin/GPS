@@ -152,7 +152,7 @@ function buildFmb920Commands(config: typeof DEFAULT_FMB920_CONFIG) {
 export function VehicleRegistry() {
   const { token } = useAuth()
   const [vehicles, setVehicles] = useState<Vehicle[]>([])
-  const [form, setForm] = useState({ name: '', imei: '', license_plate: '', protocol: 'teltonika' })
+  const [form, setForm] = useState({ name: '', imei: '', license_plate: '', protocol: 'teltonika', vehicle_type: 'car' })
   const [message, setMessage] = useState('')
   const [cmdVehicleId, setCmdVehicleId] = useState<number | null>(null)
   const [command, setCommand] = useState('')
@@ -176,7 +176,7 @@ export function VehicleRegistry() {
     event.preventDefault(); setMessage('')
     const response = await fetch('/api/v1/vehicles', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(form) })
     if (!response.ok) { setMessage((await response.json().catch(() => null))?.detail ?? 'Could not register device'); return }
-    setForm({ name: '', imei: '', license_plate: '', protocol: 'teltonika' })
+    setForm({ name: '', imei: '', license_plate: '', protocol: 'teltonika', vehicle_type: 'car' })
     setMessage('Device registered. Configure the tracker to connect to TCP 5001 or 5002.')
     await load()
   }
@@ -321,6 +321,39 @@ export function VehicleRegistry() {
               <select className="mt-2 w-full rounded-xl border border-slate-200 p-3" value={form.protocol} onChange={(e) => setForm({ ...form, protocol: e.target.value })}>
                 <option value="teltonika">Teltonika FMB920 · TCP 5001</option>
                 <option value="gt06">CONCOX V5 / GT06 · TCP 5002</option>
+              </select>
+            </label>
+            <label className="block text-sm font-semibold">Vehicle type
+              <select className="mt-2 w-full rounded-xl border border-slate-200 p-3" value={form.vehicle_type} onChange={(e) => setForm({ ...form, vehicle_type: e.target.value })}>
+                <optgroup label="Two-wheelers">
+                  <option value="bicycle">Bicycle</option>
+                  <option value="motorcycle">Motorcycle</option>
+                  <option value="scooter">Scooter</option>
+                  <option value="atv">ATV / Quad</option>
+                </optgroup>
+                <optgroup label="Cars">
+                  <option value="car">Car</option>
+                  <option value="suv">SUV</option>
+                  <option value="pickup">Pickup</option>
+                </optgroup>
+                <optgroup label="Vans &amp; Buses">
+                  <option value="van">Van</option>
+                  <option value="minibus">Minibus</option>
+                  <option value="bus">Bus</option>
+                </optgroup>
+                <optgroup label="Trucks">
+                  <option value="truck">Truck</option>
+                  <option value="semi_truck">Semi / Articulated truck</option>
+                  <option value="tanker">Tanker</option>
+                  <option value="tipper">Tipper / Dump truck</option>
+                  <option value="trailer">Trailer</option>
+                </optgroup>
+                <optgroup label="Heavy equipment">
+                  <option value="tractor">Tractor</option>
+                  <option value="forklift">Forklift</option>
+                  <option value="excavator">Excavator</option>
+                  <option value="crane">Crane</option>
+                </optgroup>
               </select>
             </label>
             {message && <p className="rounded-xl bg-mist p-3 text-sm text-forest">{message}</p>}

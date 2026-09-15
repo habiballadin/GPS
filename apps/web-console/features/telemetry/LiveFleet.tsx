@@ -5,7 +5,7 @@ import type { Map as LeafletMap, LayerGroup } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useAuth } from '@/components/providers/AuthProvider'
 
-type Vehicle = { id: number; name: string; imei: string; protocol: string; last_seen_at?: string }
+type Vehicle = { id: number; name: string; imei: string; protocol: string; vehicle_type?: string; last_seen_at?: string }
 type Position = {
   vehicle_id: number; device_imei: string; recorded_at: string
   latitude: number; longitude: number; speed_kph: number; heading: number
@@ -56,19 +56,37 @@ function vehicleColor(vehicleIndex: number): string {
   return VEHICLE_PALETTE[vehicleIndex % VEHICLE_PALETTE.length]
 }
 
-// SVG car icon rotated to heading, colored per vehicle, with alert ring
-function makeVehicleIcon(L: typeof import('leaflet'), color: string, heading: number, alert: 'sos' | 'crash' | 'towing' | 'jamming' | null, protocol: string) {
-  const isTeltonika = protocol === 'teltonika'
-  // Car SVG (top-down view) or truck for gt06
-  const shape = isTeltonika
-    ? `<path d="M8 2 C6 2 4 4 3 6 L2 10 L2 14 L3 14 L3 15 L5 15 L5 14 L11 14 L11 15 L13 15 L13 14 L14 14 L14 10 L13 6 C12 4 10 2 8 2 Z" fill="${color}" stroke="white" stroke-width="1"/>
-       <rect x="3.5" y="6" width="9" height="5" rx="1" fill="white" fill-opacity="0.25"/>
-       <circle cx="4.5" cy="13.5" r="1.2" fill="#1e293b"/>
-       <circle cx="11.5" cy="13.5" r="1.2" fill="#1e293b"/>`
-    : `<rect x="3" y="3" width="10" height="12" rx="2" fill="${color}" stroke="white" stroke-width="1"/>
-       <rect x="4" y="4" width="8" height="5" rx="1" fill="white" fill-opacity="0.25"/>
-       <circle cx="5" cy="14" r="1.2" fill="#1e293b"/>
-       <circle cx="11" cy="14" r="1.2" fill="#1e293b"/>`
+// SVG paths keyed by vehicle type — top-down silhouettes
+const VEHICLE_SHAPES: Record<string, string> = {
+  // Two-wheelers
+  bicycle:    `<ellipse cx="8" cy="8" rx="2" ry="6" fill="{c}" stroke="white" stroke-width="1"/><circle cx="8" cy="3" r="1.5" fill="{c}" stroke="white" stroke-width="0.8"/><circle cx="8" cy="13" r="1.5" fill="{c}" stroke="white" stroke-width="0.8"/>`,
+  motorcycle: `<ellipse cx="8" cy="8" rx="2.5" ry="6" fill="{c}" stroke="white" stroke-width="1"/><rect x="5.5" y="5" width="5" height="2" rx="1" fill="white" fill-opacity="0.3"/>`,
+  scooter:    `<ellipse cx="8" cy="8" rx="2.5" ry="5.5" fill="{c}" stroke="white" stroke-width="1"/><rect x="5.5" y="4" width="5" height="3" rx="1.5" fill="white" fill-opacity="0.3"/>`,
+  atv:        `<rect x="4" y="4" width="8" height="8" rx="2" fill="{c}" stroke="white" stroke-width="1"/><circle cx="5" cy="5" r="1.2" fill="#1e293b"/><circle cx="11" cy="5" r="1.2" fill="#1e293b"/><circle cx="5" cy="11" r="1.2" fill="#1e293b"/><circle cx="11" cy="11" r="1.2" fill="#1e293b"/>`,
+  // Cars
+  car:        `<path d="M8 2C6 2 4 4 3 6L2 10L2 14L3 14L3 15L5 15L5 14L11 14L11 15L13 15L13 14L14 14L14 10L13 6C12 4 10 2 8 2Z" fill="{c}" stroke="white" stroke-width="1"/><rect x="3.5" y="6" width="9" height="4" rx="1" fill="white" fill-opacity="0.25"/><circle cx="4.5" cy="13.5" r="1.2" fill="#1e293b"/><circle cx="11.5" cy="13.5" r="1.2" fill="#1e293b"/>`,
+  suv:        `<path d="M8 1.5C6 1.5 3.5 3.5 3 6L2 10L2 14.5L3 14.5L3 15.5L5.5 15.5L5.5 14.5L10.5 14.5L10.5 15.5L13 15.5L13 14.5L14 14.5L14 10L13 6C12.5 3.5 10 1.5 8 1.5Z" fill="{c}" stroke="white" stroke-width="1"/><rect x="3" y="5.5" width="10" height="5" rx="1" fill="white" fill-opacity="0.25"/><circle cx="4.5" cy="14" r="1.3" fill="#1e293b"/><circle cx="11.5" cy="14" r="1.3" fill="#1e293b"/>`,
+  pickup:     `<rect x="3" y="7" width="10" height="7" rx="1" fill="{c}" stroke="white" stroke-width="1"/><rect x="4" y="3" width="6" height="5" rx="1" fill="{c}" stroke="white" stroke-width="1"/><rect x="4.5" y="3.5" width="5" height="3.5" rx="0.5" fill="white" fill-opacity="0.25"/><circle cx="5" cy="13.5" r="1.2" fill="#1e293b"/><circle cx="11" cy="13.5" r="1.2" fill="#1e293b"/>`,
+  // Vans / buses
+  van:        `<rect x="2.5" y="3" width="11" height="11" rx="1.5" fill="{c}" stroke="white" stroke-width="1"/><rect x="3.5" y="3.5" width="9" height="5" rx="1" fill="white" fill-opacity="0.25"/><circle cx="5" cy="13.5" r="1.2" fill="#1e293b"/><circle cx="11" cy="13.5" r="1.2" fill="#1e293b"/>`,
+  minibus:    `<rect x="2" y="3" width="12" height="11" rx="1.5" fill="{c}" stroke="white" stroke-width="1"/><rect x="3" y="3.5" width="10" height="5" rx="1" fill="white" fill-opacity="0.25"/><circle cx="4.5" cy="13.5" r="1.2" fill="#1e293b"/><circle cx="11.5" cy="13.5" r="1.2" fill="#1e293b"/>`,
+  bus:        `<rect x="1.5" y="2" width="13" height="13" rx="1.5" fill="{c}" stroke="white" stroke-width="1"/><rect x="2.5" y="2.5" width="11" height="6" rx="1" fill="white" fill-opacity="0.25"/><circle cx="4" cy="14.5" r="1.3" fill="#1e293b"/><circle cx="8" cy="14.5" r="1.3" fill="#1e293b"/><circle cx="12" cy="14.5" r="1.3" fill="#1e293b"/>`,
+  // Trucks
+  truck:      `<rect x="3" y="5" width="10" height="9" rx="1" fill="{c}" stroke="white" stroke-width="1"/><rect x="4" y="2" width="5" height="4" rx="1" fill="{c}" stroke="white" stroke-width="1"/><rect x="4.5" y="2.5" width="4" height="3" rx="0.5" fill="white" fill-opacity="0.3"/><circle cx="5" cy="13.5" r="1.3" fill="#1e293b"/><circle cx="11" cy="13.5" r="1.3" fill="#1e293b"/>`,
+  semi_truck: `<rect x="2" y="6" width="12" height="8" rx="1" fill="{c}" stroke="white" stroke-width="1"/><rect x="3" y="2" width="5" height="5" rx="1" fill="{c}" stroke="white" stroke-width="1"/><rect x="3.5" y="2.5" width="4" height="3.5" rx="0.5" fill="white" fill-opacity="0.3"/><circle cx="4.5" cy="14" r="1.3" fill="#1e293b"/><circle cx="8" cy="14" r="1.3" fill="#1e293b"/><circle cx="11.5" cy="14" r="1.3" fill="#1e293b"/>`,
+  tanker:     `<rect x="2" y="5" width="12" height="8" rx="3" fill="{c}" stroke="white" stroke-width="1"/><rect x="3" y="2" width="4" height="4" rx="1" fill="{c}" stroke="white" stroke-width="1"/><circle cx="5" cy="13.5" r="1.3" fill="#1e293b"/><circle cx="11" cy="13.5" r="1.3" fill="#1e293b"/>`,
+  tipper:     `<rect x="3" y="5" width="10" height="8" rx="1" fill="{c}" stroke="white" stroke-width="1"/><path d="M4 5 L5 2 L11 2 L12 5Z" fill="{c}" stroke="white" stroke-width="1"/><circle cx="5" cy="13" r="1.3" fill="#1e293b"/><circle cx="11" cy="13" r="1.3" fill="#1e293b"/>`,
+  // Heavy equipment
+  trailer:    `<rect x="1.5" y="4" width="13" height="9" rx="1" fill="{c}" stroke="white" stroke-width="1"/><circle cx="4" cy="13.5" r="1.2" fill="#1e293b"/><circle cx="8" cy="13.5" r="1.2" fill="#1e293b"/><circle cx="12" cy="13.5" r="1.2" fill="#1e293b"/>`,
+  tractor:    `<rect x="4" y="5" width="8" height="8" rx="1" fill="{c}" stroke="white" stroke-width="1"/><rect x="5" y="2" width="4" height="4" rx="1" fill="{c}" stroke="white" stroke-width="1"/><circle cx="4" cy="13.5" r="2" fill="#1e293b"/><circle cx="12" cy="13.5" r="1.3" fill="#1e293b"/>`,
+  forklift:   `<rect x="5" y="3" width="7" height="10" rx="1" fill="{c}" stroke="white" stroke-width="1"/><rect x="2" y="11" width="3" height="1.5" rx="0.5" fill="{c}" stroke="white" stroke-width="0.8"/><rect x="2" y="13" width="3" height="1.5" rx="0.5" fill="{c}" stroke="white" stroke-width="0.8"/><circle cx="7" cy="14" r="1.3" fill="#1e293b"/><circle cx="11" cy="14" r="1.3" fill="#1e293b"/>`,
+  excavator:  `<rect x="4" y="5" width="8" height="7" rx="1" fill="{c}" stroke="white" stroke-width="1"/><path d="M3 8 Q1 6 2 4 L4 5" fill="{c}" stroke="white" stroke-width="0.8"/><circle cx="5" cy="13" r="2" fill="#1e293b"/><circle cx="11" cy="13" r="2" fill="#1e293b"/>`,
+  crane:      `<rect x="5" y="6" width="6" height="8" rx="1" fill="{c}" stroke="white" stroke-width="1"/><line x1="8" y1="6" x2="8" y2="1" stroke="{c}" stroke-width="2"/><line x1="8" y1="1" x2="13" y2="3" stroke="{c}" stroke-width="1.5"/><circle cx="6" cy="14" r="1.3" fill="#1e293b"/><circle cx="10" cy="14" r="1.3" fill="#1e293b"/>`,
+}
+
+function makeVehicleIcon(L: typeof import('leaflet'), color: string, heading: number, alert: 'sos' | 'crash' | 'towing' | 'jamming' | null, vehicleType: string) {
+  const shapeTemplate = VEHICLE_SHAPES[vehicleType] ?? VEHICLE_SHAPES.car
+  const shape = shapeTemplate.replaceAll('{c}', color)
 
   const alertRing = alert === 'sos' || alert === 'crash'
     ? `<circle cx="8" cy="8" r="10" fill="none" stroke="#ef4444" stroke-width="2.5" stroke-dasharray="4 2" opacity="0.9"/>`
@@ -137,9 +155,9 @@ function RealMap({ positions, trails, vehicles }: { positions: Position[]; trail
         const vehicle = vehicles.find(v => v.id === p.vehicle_id)
         const color = colorMap.get(p.vehicle_id) ?? '#64748b'
         const name = vehicle?.name ?? p.device_imei
-        const protocol = vehicle?.protocol ?? 'teltonika'
+        const vehicleType = vehicle?.vehicle_type ?? 'car'
         const alert = p.sos ? 'sos' : p.crash ? 'crash' : p.towing ? 'towing' : p.jamming ? 'jamming' : null
-        const icon = makeVehicleIcon(L, color, p.heading ?? 0, alert, protocol)
+        const icon = makeVehicleIcon(L, color, p.heading ?? 0, alert, vehicleType)
 
         const statusLine = p.ignition ? `🔑 ${p.speed_kph.toFixed(0)} km/h` : '⭕ IGN OFF'
         const alertLine = alert ? ` ⚠ ${alert.toUpperCase()}` : ''

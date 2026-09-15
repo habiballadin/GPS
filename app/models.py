@@ -68,6 +68,7 @@ class Vehicle(Base):
     idle_alert_minutes: Mapped[int] = mapped_column(Integer, default=10)
     # Scheduled immobilizer: "HH:MM-HH:MM" e.g. "22:00-06:00" means cut outside those hours
     immobilizer_schedule: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    vehicle_type: Mapped[str] = mapped_column(String(30), default="car")
 
 
 class VehicleAssignment(Base):

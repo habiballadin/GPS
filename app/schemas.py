@@ -62,11 +62,20 @@ class InvitationCreate(BaseModel):
     role: Literal["admin", "manager", "operator", "viewer"] = "operator"
 
 
+VEHICLE_TYPES = Literal[
+    "bicycle", "motorcycle", "scooter", "atv",
+    "car", "suv", "pickup", "van", "minibus",
+    "bus", "truck", "semi_truck", "tanker", "tipper",
+    "trailer", "tractor", "forklift", "excavator", "crane"
+]
+
+
 class VehicleIn(BaseModel):
     name: str
     imei: str = Field(min_length=8, max_length=32)
     license_plate: str | None = None
     protocol: str = "teltonika"
+    vehicle_type: str = "car"
     device_profile: str | None = None
     device_profile_config: dict[str, Any] | None = None
 
@@ -83,6 +92,7 @@ class VehiclePatch(BaseModel):
     license_plate: str | None = None
     protocol: str | None = None
     active: bool | None = None
+    vehicle_type: str | None = None
     device_profile: str | None = None
     device_profile_config: dict[str, Any] | None = None
 
