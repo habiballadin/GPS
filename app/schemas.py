@@ -132,8 +132,11 @@ class PositionOut(BaseModel):
     towing: bool = False
     jamming: bool = False
     sos: bool = False
+    crash: bool = False
+    door_open: bool = False
     ext_voltage_mv: int = 0
     battery_mv: int = 0
+    fuel_level: int = 0
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -156,8 +159,34 @@ class AutoTripOut(BaseModel):
     distance_m: float
     max_speed_kph: float
     harsh_events: int
+    idle_seconds: int = 0
     driver_score: float
     model_config = ConfigDict(from_attributes=True)
+
+
+class MaintenanceReminderIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    odometer_threshold_m: float | None = None
+    engine_hours_threshold_s: float | None = None
+
+
+class MaintenanceReminderOut(MaintenanceReminderIn):
+    id: int
+    vehicle_id: int
+    triggered: bool
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class VehicleThresholdPatch(BaseModel):
+    overspeed_kph: int | None = Field(default=None, ge=10, le=300)
+    idle_alert_minutes: int | None = Field(default=None, ge=1, le=120)
+    immobilizer_schedule: str | None = None  # "HH:MM-HH:MM" or null to disable
+
+
+class ETARequest(BaseModel):
+    dest_lat: float = Field(ge=-90, le=90)
+    dest_lon: float = Field(ge=-180, le=180)
 
 
 class DriverIn(BaseModel):

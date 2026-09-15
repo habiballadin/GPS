@@ -27,9 +27,12 @@ class NormalizedPosition:
     towing: bool = False
     jamming: bool = False
     sos: bool = False
+    crash: bool = False
+    door_open: bool = False
     ext_voltage_mv: int = 0
     battery_mv: int = 0
-    odometer_m: int = 0  # IO element 16000 if available
+    fuel_level: int = 0       # IO element 9 — analog input 1 (fuel sensor)
+    odometer_m: int = 0       # IO element 16000 if available
 
 
 def _u32(b: bytes) -> int:
@@ -133,8 +136,11 @@ def decode_teltonika(packet: bytes, imei: str) -> tuple[NormalizedPosition, ...]
             towing=bool(io.get(236, 0)),
             jamming=bool(io.get(449, 0)),
             sos=bool(io.get(1, 0)),
+            crash=bool(io.get(247, 0)),
+            door_open=bool(io.get(2, 0)),
             ext_voltage_mv=io.get(66, 0),
             battery_mv=io.get(67, 0),
+            fuel_level=io.get(9, 0),
             odometer_m=io.get(16000, 0),
         ))
     return tuple(out)

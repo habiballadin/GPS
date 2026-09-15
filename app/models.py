@@ -63,6 +63,11 @@ class Vehicle(Base):
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     device_profile: Mapped[str] = mapped_column(String(40), default="standard")
     device_profile_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Configurable alert thresholds (stored in JSON for flexibility)
+    overspeed_kph: Mapped[int] = mapped_column(Integer, default=120)
+    idle_alert_minutes: Mapped[int] = mapped_column(Integer, default=10)
+    # Scheduled immobilizer: "HH:MM-HH:MM" e.g. "22:00-06:00" means cut outside those hours
+    immobilizer_schedule: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
 
 class VehicleAssignment(Base):
@@ -133,8 +138,11 @@ class Position(Base):
     towing: Mapped[bool] = mapped_column(Boolean, default=False)
     jamming: Mapped[bool] = mapped_column(Boolean, default=False)
     sos: Mapped[bool] = mapped_column(Boolean, default=False)
+    crash: Mapped[bool] = mapped_column(Boolean, default=False)
+    door_open: Mapped[bool] = mapped_column(Boolean, default=False)
     ext_voltage_mv: Mapped[int] = mapped_column(Integer, default=0)
     battery_mv: Mapped[int] = mapped_column(Integer, default=0)
+    fuel_level: Mapped[int] = mapped_column(Integer, default=0)
     odometer_m: Mapped[int] = mapped_column(Integer, default=0)
 
 
@@ -176,7 +184,21 @@ class AutoTrip(Base):
     distance_m: Mapped[float] = mapped_column(Float, default=0)
     max_speed_kph: Mapped[float] = mapped_column(Float, default=0)
     harsh_events: Mapped[int] = mapped_column(Integer, default=0)
+    idle_seconds: Mapped[int] = mapped_column(Integer, default=0)
     driver_score: Mapped[float] = mapped_column(Float, default=100.0)
+
+
+class MaintenanceReminder(Base):
+    """Trigger a maintenance alert when odometer or engine hours threshold is reached."""
+    __tablename__ = "maintenance_reminders"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)
+    vehicle_id: Mapped[int] = mapped_column(ForeignKey("vehicles.id"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    odometer_threshold_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+    engine_hours_threshold_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+    triggered: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
 class VehicleOdometer(Base):

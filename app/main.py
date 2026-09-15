@@ -7,10 +7,11 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from .db import Base, engine, get_db
 from .gateway import start_servers, send_device_command
-from .models import Alert, AutoTrip, Driver, Geofence, OneTimeToken, Organization, Position, RefreshSession, ResourceRecord, Trip, User, Vehicle, VehicleAssignment, VehicleOdometer
-from .schemas import AssignmentIn, AssignmentOut, AutoTripOut, DriverIn, DriverOut, GeofenceIn, GeofenceOut, InvitationAccept, InvitationCreate, LoginIn, MaintenanceIn, OdometerOut, PasswordResetConfirm, PasswordResetRequest, PositionOut, RefreshIn, RegisterIn, ResourceIn, ResourceOut, ResourcePatch, RESOURCE_TYPES, TokenOut, TripIn, TripOut, UserCreate, UserOut, UserRolePatch, VehicleIn, VehicleOut, VehiclePatch, VehicleProfileIn, VehicleProfileOut
+from .models import Alert, AutoTrip, Driver, Geofence, MaintenanceReminder, OneTimeToken, Organization, Position, RefreshSession, ResourceRecord, Trip, User, Vehicle, VehicleAssignment, VehicleOdometer
+from .schemas import AssignmentIn, AssignmentOut, AutoTripOut, DriverIn, DriverOut, ETARequest, GeofenceIn, GeofenceOut, InvitationAccept, InvitationCreate, LoginIn, MaintenanceIn, MaintenanceReminderIn, MaintenanceReminderOut, OdometerOut, PasswordResetConfirm, PasswordResetRequest, PositionOut, RefreshIn, RegisterIn, ResourceIn, ResourceOut, ResourcePatch, RESOURCE_TYPES, TokenOut, TripIn, TripOut, UserCreate, UserOut, UserRolePatch, VehicleIn, VehicleOut, VehiclePatch, VehicleProfileIn, VehicleProfileOut, VehicleThresholdPatch
 from .security import current_user, hash_password, random_token, require_roles, token_for, token_hash, verify_password
 from .mailer import send_email
+from .gateway import start_servers, send_device_command, _subscribe_alerts, _unsubscribe_alerts
 
 
 @asynccontextmanager
@@ -234,6 +235,59 @@ def update_vehicle(vehicle_id: int, body: VehiclePatch, user: User = Depends(req
     return vehicle
 
 
+@app.patch("/api/v1/vehicles/{vehicle_id}/thresholds", response_model=VehicleOut)
+def update_thresholds(vehicle_id: int, body: VehicleThresholdPatch, user: User = Depends(require_roles("admin", "manager")), db: Session = Depends(get_db)):
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id, Vehicle.organization_id == user.organization_id).first()
+    if not vehicle: raise HTTPException(404, "Vehicle not found")
+    for field, value in body.model_dump(exclude_unset=True).items(): setattr(vehicle, field, value)
+    db.commit(); db.refresh(vehicle)
+    return vehicle
+
+
+@app.get("/api/v1/vehicles/{vehicle_id}/reminders", response_model=list[MaintenanceReminderOut])
+def list_reminders(vehicle_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id, Vehicle.organization_id == user.organization_id).first()
+    if not vehicle: raise HTTPException(404, "Vehicle not found")
+    return db.query(MaintenanceReminder).filter(MaintenanceReminder.vehicle_id == vehicle_id).order_by(MaintenanceReminder.id.desc()).all()
+
+
+@app.post("/api/v1/vehicles/{vehicle_id}/reminders", response_model=MaintenanceReminderOut, status_code=201)
+def create_reminder(vehicle_id: int, body: MaintenanceReminderIn, user: User = Depends(require_roles("admin", "manager")), db: Session = Depends(get_db)):
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id, Vehicle.organization_id == user.organization_id).first()
+    if not vehicle: raise HTTPException(404, "Vehicle not found")
+    rem = MaintenanceReminder(organization_id=vehicle.organization_id, vehicle_id=vehicle_id, **body.model_dump())
+    db.add(rem); db.commit(); db.refresh(rem)
+    return rem
+
+
+@app.delete("/api/v1/vehicles/{vehicle_id}/reminders/{reminder_id}", status_code=204)
+def delete_reminder(vehicle_id: int, reminder_id: int, user: User = Depends(require_roles("admin", "manager")), db: Session = Depends(get_db)):
+    rem = db.query(MaintenanceReminder).filter(MaintenanceReminder.id == reminder_id, MaintenanceReminder.vehicle_id == vehicle_id, MaintenanceReminder.organization_id == user.organization_id).first()
+    if not rem: raise HTTPException(404, "Reminder not found")
+    db.delete(rem); db.commit()
+
+
+@app.post("/api/v1/vehicles/{vehicle_id}/eta")
+def calculate_eta(vehicle_id: int, body: ETARequest, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id, Vehicle.organization_id == user.organization_id).first()
+    if not vehicle: raise HTTPException(404, "Vehicle not found")
+    last = db.query(Position).filter(Position.vehicle_id == vehicle_id).order_by(Position.recorded_at.desc()).first()
+    if not last: raise HTTPException(404, "No position data")
+    from .gateway import _distance_m
+    dist_m = _distance_m(last.latitude, last.longitude, body.dest_lat, body.dest_lon)
+    speed = last.speed_kph if last.speed_kph > 5 else 40.0  # fallback 40 km/h if stopped
+    eta_minutes = (dist_m / 1000) / speed * 60
+    return {"vehicle_id": vehicle_id, "current_lat": last.latitude, "current_lon": last.longitude, "dest_lat": body.dest_lat, "dest_lon": body.dest_lon, "distance_m": round(dist_m), "speed_kph": speed, "eta_minutes": round(eta_minutes, 1)}
+
+
+@app.get("/api/v1/vehicles/{vehicle_id}/trail", response_model=list[PositionOut])
+def vehicle_trail(vehicle_id: int, limit: int = Query(50, ge=5, le=500), user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Last N positions for live map trail."""
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id, Vehicle.organization_id == user.organization_id).first()
+    if not vehicle: raise HTTPException(404, "Vehicle not found")
+    return db.query(Position).filter(Position.vehicle_id == vehicle_id).order_by(Position.recorded_at.desc()).limit(limit).all()
+
+
 @app.get("/api/v1/vehicles/{vehicle_id}/odometer", response_model=OdometerOut)
 def get_odometer(vehicle_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id, Vehicle.organization_id == user.organization_id).first()
@@ -432,20 +486,51 @@ def delete_resource(resource_type: str, resource_id: int, user: User = Depends(c
 @app.websocket("/api/v1/ws/live")
 async def live_positions(websocket: WebSocket, token: str):
     await websocket.accept()
+    alert_queue: asyncio.Queue | None = None
     try:
         import jwt
         from .config import settings
         claims = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
         org_id = int(claims["org"])
-        while True:
-            db = next(get_db())
-            try:
-                rows = db.query(Position).filter(Position.organization_id == org_id).order_by(Position.recorded_at.desc()).limit(100).all()
-                latest = {}
-                for row in rows: latest.setdefault(row.vehicle_id, row)
-                await websocket.send_json({"type": "positions", "data": [PositionOut.model_validate(row).model_dump(mode="json") for row in latest.values()]})
-            finally: db.close()
-            await asyncio.sleep(3)
+        alert_queue = _subscribe_alerts(org_id)
+
+        async def push_alerts():
+            while True:
+                alert = await alert_queue.get()
+                await websocket.send_json({"type": "alert", "data": alert})
+
+        alert_task = asyncio.create_task(push_alerts())
+        try:
+            while True:
+                db = next(get_db())
+                try:
+                    rows = db.query(Position).filter(Position.organization_id == org_id).order_by(Position.recorded_at.desc()).limit(100).all()
+                    latest: dict = {}
+                    for row in rows: latest.setdefault(row.vehicle_id, row)
+                    # Include last 20 trail points per vehicle
+                    trails: dict = {}
+                    for vid in latest:
+                        trail = db.query(Position).filter(Position.vehicle_id == vid).order_by(Position.recorded_at.desc()).limit(20).all()
+                        trails[vid] = [PositionOut.model_validate(t).model_dump(mode="json") for t in reversed(trail)]
+                    await websocket.send_json({
+                        "type": "positions",
+                        "data": [PositionOut.model_validate(row).model_dump(mode="json") for row in latest.values()],
+                        "trails": trails,
+                    })
+                finally:
+                    db.close()
+                await asyncio.sleep(3)
+        finally:
+            alert_task.cancel()
     except (WebSocketDisconnect, Exception):
-        try: await websocket.close()
-        except RuntimeError: pass
+        pass
+    finally:
+        if alert_queue is not None:
+            try:
+                _unsubscribe_alerts(int(claims["org"]), alert_queue)  # type: ignore[name-defined]
+            except Exception:
+                pass
+        try:
+            await websocket.close()
+        except RuntimeError:
+            pass
