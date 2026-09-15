@@ -3,13 +3,15 @@ from math import asin, cos, radians, sin, sqrt
 from sqlalchemy.exc import IntegrityError
 from .config import settings
 from .db import SessionLocal
-from .models import Alert, Geofence, Position, RawPacket, Vehicle, now
+from .models import Alert, AutoTrip, Geofence, Position, RawPacket, Vehicle, VehicleOdometer, now
 from .protocols import decode_gt06, decode_teltonika, decode_codec12_response, NormalizedPosition
 
 # imei -> asyncio.StreamWriter for connected Teltonika devices
 _teltonika_clients: dict[str, asyncio.StreamWriter] = {}
 # imei -> Future waiting for a command response
 _teltonika_pending: dict[str, asyncio.Future] = {}
+# imei -> last ignition state for trip detection
+_ignition_state: dict[str, bool] = {}
 
 
 async def read_frame(reader: asyncio.StreamReader, protocol: str) -> bytes:
@@ -38,12 +40,101 @@ def ingest(protocol: str, imei: str, packet: bytes, decoded: tuple[NormalizedPos
         for p in decoded:
             exists = db.query(Position).filter(Position.device_imei == imei, Position.event_id == p.event_id).first()
             if exists: continue
-            db.add(Position(organization_id=vehicle.organization_id, vehicle_id=vehicle.id, device_imei=imei, event_id=p.event_id, recorded_at=p.recorded_at, latitude=p.latitude, longitude=p.longitude, altitude=p.altitude, speed_kph=p.speed_kph, heading=p.heading, ignition=p.ignition, satellites=p.satellites, raw_packet_id=raw.id))
+            pos_row = Position(
+                organization_id=vehicle.organization_id, vehicle_id=vehicle.id,
+                device_imei=imei, event_id=p.event_id, recorded_at=p.recorded_at,
+                latitude=p.latitude, longitude=p.longitude, altitude=p.altitude,
+                speed_kph=p.speed_kph, heading=p.heading, ignition=p.ignition,
+                satellites=p.satellites, raw_packet_id=raw.id,
+                harsh_braking=p.harsh_braking, harsh_acceleration=p.harsh_acceleration,
+                harsh_cornering=p.harsh_cornering, towing=p.towing, jamming=p.jamming,
+                sos=p.sos, ext_voltage_mv=p.ext_voltage_mv, battery_mv=p.battery_mv,
+                odometer_m=p.odometer_m,
+            )
+            db.add(pos_row); db.flush()
+
+            # --- Alerts ---
             if p.speed_kph > 120:
                 db.add(Alert(organization_id=vehicle.organization_id, vehicle_id=vehicle.id, kind="overspeed", message=f"{p.speed_kph:.0f} km/h at {p.latitude:.5f},{p.longitude:.5f}"))
+            if p.harsh_braking:
+                db.add(Alert(organization_id=vehicle.organization_id, vehicle_id=vehicle.id, kind="harsh_braking", message=f"Harsh braking at {p.latitude:.5f},{p.longitude:.5f}"))
+            if p.harsh_acceleration:
+                db.add(Alert(organization_id=vehicle.organization_id, vehicle_id=vehicle.id, kind="harsh_acceleration", message=f"Harsh acceleration at {p.latitude:.5f},{p.longitude:.5f}"))
+            if p.harsh_cornering:
+                db.add(Alert(organization_id=vehicle.organization_id, vehicle_id=vehicle.id, kind="harsh_cornering", message=f"Harsh cornering at {p.latitude:.5f},{p.longitude:.5f}"))
+            if p.towing:
+                db.add(Alert(organization_id=vehicle.organization_id, vehicle_id=vehicle.id, kind="towing", message=f"Towing detected at {p.latitude:.5f},{p.longitude:.5f}"))
+            if p.jamming:
+                db.add(Alert(organization_id=vehicle.organization_id, vehicle_id=vehicle.id, kind="jamming", message=f"GPS jamming detected at {p.latitude:.5f},{p.longitude:.5f}"))
+            if p.sos:
+                db.add(Alert(organization_id=vehicle.organization_id, vehicle_id=vehicle.id, kind="sos", message=f"SOS triggered at {p.latitude:.5f},{p.longitude:.5f}"))
+            if p.ext_voltage_mv > 0 and p.ext_voltage_mv < 9000:
+                db.add(Alert(organization_id=vehicle.organization_id, vehicle_id=vehicle.id, kind="low_external_power", message=f"External voltage low: {p.ext_voltage_mv}mV"))
+
+            # --- Geofence entry/exit ---
             for fence in db.query(Geofence).filter(Geofence.organization_id == vehicle.organization_id, Geofence.active.is_(True)).all():
-                if _distance_m(p.latitude, p.longitude, fence.latitude, fence.longitude) <= fence.radius_m:
-                    db.add(Alert(organization_id=vehicle.organization_id, vehicle_id=vehicle.id, kind="geofence", message=f"{vehicle.name} is inside {fence.name}"))
+                inside = _distance_m(p.latitude, p.longitude, fence.latitude, fence.longitude) <= fence.radius_m
+                if inside:
+                    db.add(Alert(organization_id=vehicle.organization_id, vehicle_id=vehicle.id, kind="geofence_enter", message=f"{vehicle.name} entered {fence.name}"))
+                else:
+                    db.add(Alert(organization_id=vehicle.organization_id, vehicle_id=vehicle.id, kind="geofence_exit", message=f"{vehicle.name} exited {fence.name}"))
+
+            # --- Auto trip detection ---
+            prev_ignition = _ignition_state.get(imei)
+            if prev_ignition is not None:
+                if not prev_ignition and p.ignition:
+                    # Ignition turned ON — start new trip
+                    db.add(AutoTrip(
+                        organization_id=vehicle.organization_id, vehicle_id=vehicle.id,
+                        started_at=p.recorded_at, start_lat=p.latitude, start_lon=p.longitude,
+                    ))
+                elif prev_ignition and not p.ignition:
+                    # Ignition turned OFF — close open trip
+                    open_trip = db.query(AutoTrip).filter(
+                        AutoTrip.vehicle_id == vehicle.id, AutoTrip.ended_at.is_(None)
+                    ).order_by(AutoTrip.id.desc()).first()
+                    if open_trip:
+                        open_trip.ended_at = p.recorded_at
+                        open_trip.end_lat = p.latitude
+                        open_trip.end_lon = p.longitude
+                        # Compute distance and score from positions in this trip window
+                        trip_positions = db.query(Position).filter(
+                            Position.vehicle_id == vehicle.id,
+                            Position.recorded_at >= open_trip.started_at,
+                            Position.recorded_at <= p.recorded_at,
+                        ).order_by(Position.recorded_at.asc()).all()
+                        dist = 0.0
+                        max_spd = 0.0
+                        harsh = 0
+                        for i in range(1, len(trip_positions)):
+                            dist += _distance_m(trip_positions[i-1].latitude, trip_positions[i-1].longitude, trip_positions[i].latitude, trip_positions[i].longitude)
+                            max_spd = max(max_spd, trip_positions[i].speed_kph)
+                            if trip_positions[i].harsh_braking: harsh += 1
+                            if trip_positions[i].harsh_acceleration: harsh += 1
+                            if trip_positions[i].harsh_cornering: harsh += 1
+                        open_trip.distance_m = dist
+                        open_trip.max_speed_kph = max_spd
+                        open_trip.harsh_events = harsh
+                        open_trip.driver_score = max(0.0, 100.0 - harsh * 5 - (max(0, max_spd - 120) * 0.5))
+            _ignition_state[imei] = p.ignition
+
+            # --- Odometer accumulation ---
+            odo = db.query(VehicleOdometer).filter(VehicleOdometer.vehicle_id == vehicle.id).first()
+            if not odo:
+                odo = VehicleOdometer(vehicle_id=vehicle.id, organization_id=vehicle.organization_id)
+                db.add(odo)
+                db.flush()
+            if odo.last_position_id:
+                last_pos = db.get(Position, odo.last_position_id)
+                if last_pos:
+                    seg = _distance_m(last_pos.latitude, last_pos.longitude, p.latitude, p.longitude)
+                    if seg < 50_000:  # ignore teleports > 50km
+                        odo.total_distance_m += seg
+            if p.ignition:
+                # Approximate engine hours: assume ~30s between packets
+                odo.engine_hours_s += 30
+            odo.last_position_id = pos_row.id
+
             count += 1
         vehicle.last_seen_at = now()
         db.commit()

@@ -7,8 +7,8 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from .db import Base, engine, get_db
 from .gateway import start_servers, send_device_command
-from .models import Alert, Driver, Geofence, OneTimeToken, Organization, Position, RefreshSession, ResourceRecord, Trip, User, Vehicle, VehicleAssignment
-from .schemas import AssignmentIn, AssignmentOut, DriverIn, DriverOut, GeofenceIn, GeofenceOut, InvitationAccept, InvitationCreate, LoginIn, MaintenanceIn, PasswordResetConfirm, PasswordResetRequest, PositionOut, RefreshIn, RegisterIn, ResourceIn, ResourceOut, ResourcePatch, RESOURCE_TYPES, TokenOut, TripIn, TripOut, UserCreate, UserOut, UserRolePatch, VehicleIn, VehicleOut, VehiclePatch
+from .models import Alert, AutoTrip, Driver, Geofence, OneTimeToken, Organization, Position, RefreshSession, ResourceRecord, Trip, User, Vehicle, VehicleAssignment, VehicleOdometer
+from .schemas import AssignmentIn, AssignmentOut, AutoTripOut, DriverIn, DriverOut, GeofenceIn, GeofenceOut, InvitationAccept, InvitationCreate, LoginIn, MaintenanceIn, OdometerOut, PasswordResetConfirm, PasswordResetRequest, PositionOut, RefreshIn, RegisterIn, ResourceIn, ResourceOut, ResourcePatch, RESOURCE_TYPES, TokenOut, TripIn, TripOut, UserCreate, UserOut, UserRolePatch, VehicleIn, VehicleOut, VehiclePatch, VehicleProfileIn, VehicleProfileOut
 from .security import current_user, hash_password, random_token, require_roles, token_for, token_hash, verify_password
 from .mailer import send_email
 
@@ -162,6 +162,33 @@ def get_vehicle(vehicle_id: int, user: User = Depends(current_user), db: Session
     return vehicle
 
 
+@app.get("/api/v1/vehicles/{vehicle_id}/profile", response_model=VehicleProfileOut)
+def get_vehicle_profile(vehicle_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id, Vehicle.organization_id == user.organization_id).first()
+    if not vehicle: raise HTTPException(404, "Vehicle not found")
+    return VehicleProfileOut(vehicle_id=vehicle.id, profile=vehicle.device_profile or "standard", config=vehicle.device_profile_config or {})
+
+
+@app.post("/api/v1/vehicles/{vehicle_id}/profile", response_model=VehicleProfileOut)
+def save_vehicle_profile(vehicle_id: int, body: VehicleProfileIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id, Vehicle.organization_id == user.organization_id).first()
+    if not vehicle: raise HTTPException(404, "Vehicle not found")
+    vehicle.device_profile = body.profile
+    vehicle.device_profile_config = body.config or {}
+    db.commit(); db.refresh(vehicle)
+    return VehicleProfileOut(vehicle_id=vehicle.id, profile=vehicle.device_profile, config=vehicle.device_profile_config or {})
+
+
+@app.delete("/api/v1/vehicles/{vehicle_id}/profile")
+def delete_vehicle_profile(vehicle_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id, Vehicle.organization_id == user.organization_id).first()
+    if not vehicle: raise HTTPException(404, "Vehicle not found")
+    vehicle.device_profile = "standard"
+    vehicle.device_profile_config = {}
+    db.commit()
+    return {"message": "Vehicle profile reset"}
+
+
 @app.get("/api/v1/vehicles/{vehicle_id}/history", response_model=list[PositionOut])
 def vehicle_history(vehicle_id: int, since: datetime | None = None, until: datetime | None = None, limit: int = Query(1000, ge=1, le=10000), user: User = Depends(current_user), db: Session = Depends(get_db)):
     vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id, Vehicle.organization_id == user.organization_id).first()
@@ -205,6 +232,52 @@ def update_vehicle(vehicle_id: int, body: VehiclePatch, user: User = Depends(req
     for field, value in body.model_dump(exclude_unset=True).items(): setattr(vehicle, field, value)
     db.commit(); db.refresh(vehicle)
     return vehicle
+
+
+@app.get("/api/v1/vehicles/{vehicle_id}/odometer", response_model=OdometerOut)
+def get_odometer(vehicle_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id, Vehicle.organization_id == user.organization_id).first()
+    if not vehicle: raise HTTPException(404, "Vehicle not found")
+    odo = db.query(VehicleOdometer).filter(VehicleOdometer.vehicle_id == vehicle_id).first()
+    return OdometerOut(vehicle_id=vehicle_id, total_distance_m=odo.total_distance_m if odo else 0, engine_hours_s=odo.engine_hours_s if odo else 0)
+
+
+@app.get("/api/v1/vehicles/{vehicle_id}/auto-trips", response_model=list[AutoTripOut])
+def list_auto_trips(vehicle_id: int, limit: int = Query(100, ge=1, le=500), user: User = Depends(current_user), db: Session = Depends(get_db)):
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id, Vehicle.organization_id == user.organization_id).first()
+    if not vehicle: raise HTTPException(404, "Vehicle not found")
+    return db.query(AutoTrip).filter(AutoTrip.vehicle_id == vehicle_id).order_by(AutoTrip.id.desc()).limit(limit).all()
+
+
+@app.get("/api/v1/vehicles/{vehicle_id}/telematics")
+def get_telematics(vehicle_id: int, limit: int = Query(200, ge=1, le=1000), user: User = Depends(current_user), db: Session = Depends(get_db)):
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id, Vehicle.organization_id == user.organization_id).first()
+    if not vehicle: raise HTTPException(404, "Vehicle not found")
+    rows = db.query(Position).filter(
+        Position.vehicle_id == vehicle_id,
+        (Position.harsh_braking.is_(True) | Position.harsh_acceleration.is_(True) | Position.harsh_cornering.is_(True) | Position.towing.is_(True) | Position.jamming.is_(True) | Position.sos.is_(True))
+    ).order_by(Position.recorded_at.desc()).limit(limit).all()
+    events = []
+    for r in rows:
+        for kind in ("harsh_braking", "harsh_acceleration", "harsh_cornering", "towing", "jamming", "sos"):
+            if getattr(r, kind):
+                events.append({"kind": kind, "recorded_at": r.recorded_at, "latitude": r.latitude, "longitude": r.longitude, "speed_kph": r.speed_kph})
+    odo = db.query(VehicleOdometer).filter(VehicleOdometer.vehicle_id == vehicle_id).first()
+    trips = db.query(AutoTrip).filter(AutoTrip.vehicle_id == vehicle_id, AutoTrip.ended_at.isnot(None)).all()
+    avg_score = round(sum(t.driver_score for t in trips) / len(trips), 1) if trips else 100.0
+    return {"vehicle_id": vehicle_id, "events": events, "total_distance_m": odo.total_distance_m if odo else 0, "engine_hours_s": odo.engine_hours_s if odo else 0, "avg_driver_score": avg_score, "total_trips": len(trips)}
+
+
+@app.post("/api/v1/vehicles/{vehicle_id}/immobilizer")
+async def toggle_immobilizer(vehicle_id: int, body: dict, user: User = Depends(require_roles("admin", "manager")), db: Session = Depends(get_db)):
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id, Vehicle.organization_id == user.organization_id).first()
+    if not vehicle: raise HTTPException(404, "Vehicle not found")
+    if vehicle.protocol != "teltonika": raise HTTPException(400, "Immobilizer only supported for Teltonika devices")
+    enable = bool(body.get("enable", True))
+    cmd = "setdigout 1 1" if enable else "setdigout 1 0"
+    result = await send_device_command(vehicle.imei, cmd)
+    if result is None: raise HTTPException(503, "Device not connected")
+    return {"imei": vehicle.imei, "immobilized": enable, "response": result}
 
 
 @app.post("/api/v1/vehicles/{vehicle_id}/command")

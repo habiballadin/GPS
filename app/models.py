@@ -61,6 +61,8 @@ class Vehicle(Base):
     protocol: Mapped[str] = mapped_column(String(30), default="teltonika")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    device_profile: Mapped[str] = mapped_column(String(40), default="standard")
+    device_profile_config: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
 class VehicleAssignment(Base):
@@ -124,6 +126,16 @@ class Position(Base):
     ignition: Mapped[bool] = mapped_column(Boolean, default=False)
     satellites: Mapped[int] = mapped_column(Integer, default=0)
     raw_packet_id: Mapped[int | None] = mapped_column(ForeignKey("raw_packets.id"), nullable=True)
+    # IO telemetry
+    harsh_braking: Mapped[bool] = mapped_column(Boolean, default=False)
+    harsh_acceleration: Mapped[bool] = mapped_column(Boolean, default=False)
+    harsh_cornering: Mapped[bool] = mapped_column(Boolean, default=False)
+    towing: Mapped[bool] = mapped_column(Boolean, default=False)
+    jamming: Mapped[bool] = mapped_column(Boolean, default=False)
+    sos: Mapped[bool] = mapped_column(Boolean, default=False)
+    ext_voltage_mv: Mapped[int] = mapped_column(Integer, default=0)
+    battery_mv: Mapped[int] = mapped_column(Integer, default=0)
+    odometer_m: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class RawPacket(Base):
@@ -146,6 +158,36 @@ class ResourceRecord(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     details: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class AutoTrip(Base):
+    """Auto-detected trip from ignition on/off transitions."""
+    __tablename__ = "auto_trips"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)
+    vehicle_id: Mapped[int] = mapped_column(ForeignKey("vehicles.id"), index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    start_lat: Mapped[float] = mapped_column(Float, default=0)
+    start_lon: Mapped[float] = mapped_column(Float, default=0)
+    end_lat: Mapped[float] = mapped_column(Float, default=0)
+    end_lon: Mapped[float] = mapped_column(Float, default=0)
+    distance_m: Mapped[float] = mapped_column(Float, default=0)
+    max_speed_kph: Mapped[float] = mapped_column(Float, default=0)
+    harsh_events: Mapped[int] = mapped_column(Integer, default=0)
+    driver_score: Mapped[float] = mapped_column(Float, default=100.0)
+
+
+class VehicleOdometer(Base):
+    """Cumulative odometer and engine hours per vehicle."""
+    __tablename__ = "vehicle_odometers"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    vehicle_id: Mapped[int] = mapped_column(ForeignKey("vehicles.id"), unique=True, index=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)
+    total_distance_m: Mapped[float] = mapped_column(Float, default=0)
+    engine_hours_s: Mapped[float] = mapped_column(Float, default=0)
+    last_position_id: Mapped[int | None] = mapped_column(ForeignKey("positions.id"), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 

@@ -20,6 +20,16 @@ class NormalizedPosition:
     ignition: bool = False
     satellites: int = 0
     event_id: str = ""
+    # IO telemetry fields
+    harsh_braking: bool = False
+    harsh_acceleration: bool = False
+    harsh_cornering: bool = False
+    towing: bool = False
+    jamming: bool = False
+    sos: bool = False
+    ext_voltage_mv: int = 0
+    battery_mv: int = 0
+    odometer_m: int = 0  # IO element 16000 if available
 
 
 def _u32(b: bytes) -> int:
@@ -86,22 +96,47 @@ def decode_teltonika(packet: bytes, imei: str) -> tuple[NormalizedPosition, ...]
         angle = int.from_bytes(data[pos:pos + 2], "big"); pos += 2
         sats = data[pos]; pos += 1
         speed = int.from_bytes(data[pos:pos + 2], "big"); pos += 2
-        # Skip IO according to Codec 8/8E. This keeps the GPS decoder strict and safe.
+        # Parse IO elements from Codec 8/8E
+        io: dict[int, int] = {}
         if pos >= len(data): raise ValueError("truncated Teltonika IO")
         event_io = data[pos]; pos += 1
         if codec == 0x08:
             if pos + 1 > len(data): raise ValueError("truncated Teltonika IO")
-            total = data[pos]; pos += 1
-            for size, width in ((1, 1), (2, 2), (4, 4), (8, 8)):
+            _total = data[pos]; pos += 1
+            for width in (1, 2, 4, 8):
                 if pos >= len(data): break
-                n = data[pos]; pos += 1 + n * (1 + width)
-        else:
+                n = data[pos]; pos += 1
+                for _ in range(n):
+                    if pos + 1 + width > len(data): break
+                    eid = data[pos]; pos += 1
+                    io[eid] = int.from_bytes(data[pos:pos + width], "big"); pos += width
+        else:  # 8E
             if pos + 2 > len(data): raise ValueError("truncated Teltonika IO")
-            total = int.from_bytes(data[pos:pos + 2], "big"); pos += 2
-            for width, nbytes in ((1, 1), (2, 2), (4, 4), (8, 8), (16, 16)):
+            _total = int.from_bytes(data[pos:pos + 2], "big"); pos += 2
+            for width in (1, 2, 4, 8, 16):
                 if pos + 2 > len(data): break
-                n = int.from_bytes(data[pos:pos + 2], "big"); pos += 2 + n * (2 + nbytes)
-        out.append(NormalizedPosition(imei, datetime.fromtimestamp(ts / 1000, timezone.utc), lat, lon, alt, speed, angle, False, sats, f"{ts}-{lon}-{lat}"))
+                n = int.from_bytes(data[pos:pos + 2], "big"); pos += 2
+                for _ in range(n):
+                    if pos + 2 + width > len(data): break
+                    eid = int.from_bytes(data[pos:pos + 2], "big"); pos += 2
+                    io[eid] = int.from_bytes(data[pos:pos + width], "big"); pos += width
+        out.append(NormalizedPosition(
+            imei=imei,
+            recorded_at=datetime.fromtimestamp(ts / 1000, timezone.utc),
+            latitude=lat, longitude=lon, altitude=alt,
+            speed_kph=speed, heading=angle, satellites=sats,
+            event_id=f"{ts}-{lon}-{lat}",
+            ignition=bool(io.get(239, 0)),
+            harsh_braking=bool(io.get(16, 0)),
+            harsh_acceleration=bool(io.get(17, 0)),
+            harsh_cornering=bool(io.get(18, 0)),
+            towing=bool(io.get(236, 0)),
+            jamming=bool(io.get(449, 0)),
+            sos=bool(io.get(1, 0)),
+            ext_voltage_mv=io.get(66, 0),
+            battery_mv=io.get(67, 0),
+            odometer_m=io.get(16000, 0),
+        ))
     return tuple(out)
 
 

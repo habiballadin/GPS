@@ -67,6 +67,8 @@ class VehicleIn(BaseModel):
     imei: str = Field(min_length=8, max_length=32)
     license_plate: str | None = None
     protocol: str = "teltonika"
+    device_profile: str | None = None
+    device_profile_config: dict[str, Any] | None = None
 
 
 class VehicleOut(VehicleIn):
@@ -81,6 +83,18 @@ class VehiclePatch(BaseModel):
     license_plate: str | None = None
     protocol: str | None = None
     active: bool | None = None
+    device_profile: str | None = None
+    device_profile_config: dict[str, Any] | None = None
+
+
+class VehicleProfileIn(BaseModel):
+    profile: str = Field(default="standard", min_length=1, max_length=40)
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class VehicleProfileOut(VehicleProfileIn):
+    vehicle_id: int
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AssignmentIn(BaseModel):
@@ -112,6 +126,37 @@ class PositionOut(BaseModel):
     heading: float
     ignition: bool
     satellites: int
+    harsh_braking: bool = False
+    harsh_acceleration: bool = False
+    harsh_cornering: bool = False
+    towing: bool = False
+    jamming: bool = False
+    sos: bool = False
+    ext_voltage_mv: int = 0
+    battery_mv: int = 0
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OdometerOut(BaseModel):
+    vehicle_id: int
+    total_distance_m: float
+    engine_hours_s: float
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AutoTripOut(BaseModel):
+    id: int
+    vehicle_id: int
+    started_at: datetime
+    ended_at: datetime | None = None
+    start_lat: float
+    start_lon: float
+    end_lat: float
+    end_lon: float
+    distance_m: float
+    max_speed_kph: float
+    harsh_events: int
+    driver_score: float
     model_config = ConfigDict(from_attributes=True)
 
 
