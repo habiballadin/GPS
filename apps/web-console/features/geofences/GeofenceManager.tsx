@@ -76,10 +76,19 @@ export function GeofenceManager() {
   const [form, setForm] = useState({ name: '', radius_m: '500' })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
 
   const load = async () => {
-    const r = await fetch('/api/v1/geofences', { headers: { Authorization: `Bearer ${token}` } })
-    if (r.ok) setFences(await r.json())
+    if (!token) return
+    setLoading(true)
+    try {
+      const r = await fetch('/api/v1/geofences', { headers: { Authorization: `Bearer ${token}` } })
+      const data = await r.json().catch(() => null)
+      if (r.ok) setFences(data ?? [])
+      else setError(typeof data?.detail === 'string' ? data.detail : `Could not load geofences (${r.status})`)
+    } catch {
+      setError('Could not reach the fleet API. Check the connection and try again.')
+    } finally { setLoading(false) }
   }
 
   useEffect(() => { if (token) void load() }, [token]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -97,7 +106,8 @@ export function GeofenceManager() {
     if (r.ok) {
       setForm({ name: '', radius_m: '500' }); setPicked(null); await load()
     } else {
-      setError('Failed to create geofence.')
+      const data = await r.json().catch(() => null)
+      setError(typeof data?.detail === 'string' ? data.detail : `Failed to create geofence (${r.status}).`)
     }
     setSaving(false)
   }
@@ -167,10 +177,10 @@ export function GeofenceManager() {
           <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-panel">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-bold">Active fences</h2>
-              <span className="rounded-full bg-mist px-3 py-1 text-xs font-bold text-forest">{fences.length}</span>
+              <span className="rounded-full bg-mist px-3 py-1 text-xs font-bold text-forest">{loading ? '…' : fences.length}</span>
             </div>
             <div className="mt-4 max-h-80 space-y-2 overflow-y-auto">
-              {fences.length === 0 && <p className="py-8 text-center text-sm text-slate-400">No geofences yet.</p>}
+              {fences.length === 0 && <p className="py-8 text-center text-sm text-slate-400">{loading ? 'Loading geofences…' : 'No geofences yet.'}</p>}
               {fences.map(f => (
                 <div key={f.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3">
                   <div>
